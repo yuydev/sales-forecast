@@ -9,7 +9,11 @@ var service = new ParallelBatchForecastService(maxDegreeOfParallelism: 6);
 var progress = new Progress<ForecastProgress>(p =>
     Console.WriteLine($"{p.Completed}/{p.Total} {p.Percentage:F1}% {p.BusinessUnit}/{p.Sku}"));
 using var cts = new CancellationTokenSource();
-var result = await service.ProcessAsync(rows, useLatestHistory: true, progress, cts.Token);
+var result = await service.ProcessAsync(
+    rows,
+    useLatestHistory: true,
+    progress: progress,
+    cancellationToken: cts.Token);
 ```
 
 Cancellation propagates as `OperationCanceledException`. A normal failure for one SKU is recorded in `Summaries` with `Status = "Failed"` and does not stop other groups.
