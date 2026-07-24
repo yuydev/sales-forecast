@@ -88,7 +88,9 @@ public sealed class ParallelBatchForecastService
 
                 // Interlocked保证多个并行任务更新完成数时不会发生竞争。
                 var current = Interlocked.Increment(ref completed);
-                var remaining = current == 0
+
+                // 预计剩余时间可能未知，因此使用可空的TimeSpan。
+                TimeSpan? remaining = current == 0
                     ? null
                     : TimeSpan.FromSeconds(
                         watch.Elapsed.TotalSeconds
