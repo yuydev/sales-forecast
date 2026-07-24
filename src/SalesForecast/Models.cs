@@ -1,5 +1,6 @@
 namespace SalesForecast;
 
+/// <summary>原始月度销售记录。</summary>
 public sealed class MonthlySalesRecord
 {
     public string BusinessUnit { get; set; } = string.Empty;
@@ -8,6 +9,7 @@ public sealed class MonthlySalesRecord
     public double Quantity { get; set; }
 }
 
+/// <summary>每个事业部和SKU的预测汇总结果。</summary>
 public sealed class ForecastSummaryRecord
 {
     public string BusinessUnit { get; init; } = string.Empty;
@@ -37,6 +39,7 @@ public sealed class ForecastSummaryRecord
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
 }
 
+/// <summary>测试集逐月预测明细。</summary>
 public sealed class ForecastDetailRecord
 {
     public string BusinessUnit { get; init; } = string.Empty;
@@ -54,12 +57,14 @@ public sealed class ForecastDetailRecord
     public double CumulativeMae { get; init; }
 }
 
+/// <summary>批量预测的汇总结果和明细结果。</summary>
 public sealed class BatchForecastResult
 {
     public List<ForecastSummaryRecord> Summaries { get; } = new();
     public List<ForecastDetailRecord> Details { get; } = new();
 }
 
+/// <summary>批量预测进度回调信息。</summary>
 public sealed class ForecastProgress
 {
     public int Completed { get; init; }
