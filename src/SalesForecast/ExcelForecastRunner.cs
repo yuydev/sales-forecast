@@ -5,12 +5,23 @@ namespace SalesForecast;
 /// <summary>Excel输入、预测执行和结果导出。</summary>
 public static class ExcelForecastRunner
 {
+    private const int MaxRowsPerCandidateSheet = 900_000;
+
     private static readonly string[] BusinessUnitHeaders = ["BusinessUnit", "Business Unit", "事业部", "事业部编码"];
     private static readonly string[] SkuHeaders = ["Sku", "SKU", "sku", "物料编码", "商品编码"];
     private static readonly string[] MonthHeaders = ["Month", "月份", "日期", "年月"];
     private static readonly string[] QuantityHeaders = ["Quantity", "Qty", "销量", "销售数量", "实际值", "数量"];
 
-    public static async Task<BatchForecastResult> RunAsync(string inputPath, string outputPath, int trainLength = 30, int horizon = 6, int seasonLength = 12, int? maxDegreeOfParallelism = null, bool useLatestHistory = true, IProgress<ForecastProgress>? progress = null, CancellationToken cancellationToken = default)
+    public static async Task<BatchForecastResult> RunAsync(
+        string inputPath,
+        string outputPath,
+        int trainLength = 30,
+        int horizon = 6,
+        int seasonLength = 12,
+        int? maxDegreeOfParallelism = null,
+        bool useLatestHistory = true,
+        IProgress<ForecastProgress>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         var rows = ReadRows(inputPath);
         var service = new ParallelBatchForecastService(trainLength, horizon, seasonLength, maxDegreeOfParallelism);
@@ -25,8 +36,11 @@ public static class ExcelForecastRunner
             throw new FileNotFoundException("找不到输入Excel文件。", inputPath);
 
         using var workbook = new XLWorkbook(inputPath);
-        var worksheet = workbook.Worksheets.FirstOrDefault() ?? throw new InvalidDataException("Excel文件没有工作表。");
-        var headerRow = worksheet.FirstRowUsed() ?? throw new InvalidDataException("Excel文件为空。");
+        var worksheet = workbook.Worksheets.FirstOrDefault()
+            ?? throw new InvalidDataException("Excel文件没有工作表。");
+        var headerRow = worksheet.FirstRowUsed()
+            ?? throw new InvalidDataException("Excel文件为空。");
+
         var headerMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var cell in headerRow.CellsUsed())
         {
@@ -45,6 +59,7 @@ public static class ExcelForecastRunner
         {
             if (row.CellsUsed().All(x => x.IsEmpty()))
                 continue;
+
             var businessUnit = row.Cell(businessUnitColumn).GetString().Trim();
             var sku = row.Cell(skuColumn).GetString().Trim();
             if (string.IsNullOrWhiteSpace(businessUnit) || string.IsNullOrWhiteSpace(sku))
@@ -61,6 +76,7 @@ public static class ExcelForecastRunner
 
         if (rows.Count == 0)
             throw new InvalidDataException("Excel中没有可用的销售数据。");
+
         return rows;
     }
 
@@ -73,19 +89,44 @@ public static class ExcelForecastRunner
         using var workbook = new XLWorkbook();
         AddSummarySheet(workbook, result.Summaries);
         AddDetailSheet(workbook, result.Details);
-        AddCandidateSheet(workbook, result.Candidates);
+        AddCandidateSheets(workbook, result.Candidates);
         AddReadmeSheet(workbook);
         workbook.SaveAs(outputPath);
     }
 
-    private static void AddCandidateSheet(XLWorkbook workbook, IReadOnlyCollection<ForecastCandidateRecord> candidates)
+    /// <summary>
+    /// 将参数搜索结果自动拆分到多个工作表，避免超过Excel单表最大行数。
+    /// </summary>
+    private static void AddCandidateSheets(
+        XLWorkbook workbook,
+        IReadOnlyCollection<ForecastCandidateRecord> candidates)
     {
-        var sheet = workbook.Worksheets.Add("参数搜索");
-        var headers = new[] { "事业部", "SKU", "排名", "模型类型", "Alpha", "Beta", "Gamma", "季节周期", "验证集sMAPE", "验证集WAPE", "验证集MAE", "综合评分", "是否选中" };
-        WriteHeaders(sheet, headers);
-        var row = 2;
-        foreach (var item in candidates.OrderBy(x => x.BusinessUnit).ThenBy(x => x.Sku).ThenBy(x => x.Rank))
+        var headers = new[]
         {
+            "事业部", "SKU", "排名", "模型类型", "Alpha", "Beta", "Gamma",
+            "季节周期", "验证集sMAPE", "验证集WAPE", "验证集MAE", "综合评分", "是否选中"
+        };
+
+        var ordered = candidates
+            .OrderBy(x => x.BusinessUnit)
+            .ThenBy(x => x.Sku)
+            .ThenBy(x => x.Rank)
+            .ToList();
+
+        var sheetIndex = 1;
+        IXLWorksheet? sheet = null;
+        var row = 0;
+
+        foreach (var item in ordered)
+        {
+            // 每个工作表预留一行表头，并使用低于Excel上限的安全阈值。
+            if (sheet is null || row >= MaxRowsPerCandidateSheet)
+            {
+                sheet = workbook.Worksheets.Add($"参数搜索_{sheetIndex++}");
+                WriteHeaders(sheet, headers);
+                row = 2;
+            }
+
             sheet.Cell(row, 1).Value = item.BusinessUnit;
             sheet.Cell(row, 2).Value = item.Sku;
             sheet.Cell(row, 3).Value = item.Rank;
@@ -101,25 +142,48 @@ public static class ExcelForecastRunner
             sheet.Cell(row, 13).Value = item.IsSelected ? "是" : "否";
             row++;
         }
-        FormatTable(sheet, row - 1, headers.Length);
-        sheet.Columns(5, 7).Style.NumberFormat.Format = "0.00";
-        sheet.Columns(9, 10).Style.NumberFormat.Format = "0.00%";
-        sheet.Column(12).Style.NumberFormat.Format = "0.000000";
+
+        for (var i = 1; i < sheetIndex; i++)
+        {
+            var candidateSheet = workbook.Worksheet($"参数搜索_{i}");
+            var lastRow = candidateSheet.LastRowUsed()?.RowNumber() ?? 1;
+            FormatTable(candidateSheet, lastRow, headers.Length);
+            candidateSheet.Columns(5, 7).Style.NumberFormat.Format = "0.00";
+            candidateSheet.Columns(9, 10).Style.NumberFormat.Format = "0.00%";
+            candidateSheet.Column(12).Style.NumberFormat.Format = "0.000000";
+        }
     }
 
     private static void AddSummarySheet(XLWorkbook workbook, IReadOnlyCollection<ForecastSummaryRecord> summaries)
     {
         var sheet = workbook.Worksheets.Add("预测汇总");
-        var headers = new[] { "事业部", "SKU", "训练开始月份", "训练结束月份", "测试开始月份", "测试结束月份", "模型类型", "Alpha", "Beta", "Gamma", "季节周期", "验证集sMAPE", "验证集WAPE", "验证集MAE", "测试集sMAPE", "测试集WAPE", "测试集MAE", "是否采用季节模型", "季节模型改善比例", "训练销量", "测试实际销量", "测试预测销量", "状态", "错误信息", "创建时间" };
+        var headers = new[]
+        {
+            "事业部", "SKU", "训练开始月份", "训练结束月份", "测试开始月份", "测试结束月份",
+            "模型类型", "Alpha", "Beta", "Gamma", "季节周期", "验证集sMAPE", "验证集WAPE",
+            "验证集MAE", "测试集sMAPE", "测试集WAPE", "测试集MAE", "是否采用季节模型",
+            "季节模型改善比例", "训练销量", "测试实际销量", "测试预测销量", "状态", "错误信息", "创建时间"
+        };
         WriteHeaders(sheet, headers);
         var row = 2;
         foreach (var item in summaries)
         {
-            var values = new object?[] { item.BusinessUnit, item.Sku, item.TrainStartMonth, item.TrainEndMonth, item.TestStartMonth, item.TestEndMonth, item.ModelType.ToString(), item.Alpha, item.Beta, item.Gamma, item.SeasonLength, item.ValidationSmape, item.ValidationWape, item.ValidationMae, item.TestSmape, item.TestWape, item.TestMae, item.SeasonalModelAccepted ? "是" : "否", item.SeasonalImprovement, item.TrainQuantity, item.TestActualQuantity, item.TestForecastQuantity, item.Status, item.ErrorMessage, item.CreatedAt };
+            var values = new object?[]
+            {
+                item.BusinessUnit, item.Sku, item.TrainStartMonth, item.TrainEndMonth,
+                item.TestStartMonth, item.TestEndMonth, item.ModelType.ToString(), item.Alpha,
+                item.Beta, item.Gamma, item.SeasonLength, item.ValidationSmape,
+                item.ValidationWape, item.ValidationMae, item.TestSmape, item.TestWape,
+                item.TestMae, item.SeasonalModelAccepted ? "是" : "否", item.SeasonalImprovement,
+                item.TrainQuantity, item.TestActualQuantity, item.TestForecastQuantity,
+                item.Status, item.ErrorMessage, item.CreatedAt
+            };
+
             for (var i = 0; i < values.Length; i++)
                 sheet.Cell(row, i + 1).Value = values[i]?.ToString() ?? string.Empty;
             row++;
         }
+
         FormatTable(sheet, row - 1, headers.Length);
         sheet.Columns(3, 6).Style.DateFormat.Format = "yyyy-mm";
         sheet.Column(25).Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
@@ -132,7 +196,11 @@ public static class ExcelForecastRunner
     private static void AddDetailSheet(XLWorkbook workbook, IReadOnlyCollection<ForecastDetailRecord> details)
     {
         var sheet = workbook.Worksheets.Add("预测明细");
-        var headers = new[] { "事业部", "SKU", "月份", "数据类型", "测试月份序号", "实际值", "预测值", "误差", "绝对误差", "绝对百分比误差", "单月WAPE", "累计WAPE", "累计MAE" };
+        var headers = new[]
+        {
+            "事业部", "SKU", "月份", "数据类型", "测试月份序号", "实际值", "预测值",
+            "误差", "绝对误差", "绝对百分比误差", "单月WAPE", "累计WAPE", "累计MAE"
+        };
         WriteHeaders(sheet, headers);
         var row = 2;
         foreach (var item in details)
@@ -152,6 +220,7 @@ public static class ExcelForecastRunner
             sheet.Cell(row, 13).Value = item.CumulativeMae;
             row++;
         }
+
         FormatTable(sheet, row - 1, headers.Length);
         sheet.Column(3).Style.DateFormat.Format = "yyyy-mm";
         sheet.Columns(10, 12).Style.NumberFormat.Format = "0.00%";
@@ -165,8 +234,8 @@ public static class ExcelForecastRunner
         sheet.Cell(1, 1).Value = "说明";
         sheet.Cell(2, 1).Value = "输入表第一行必须包含：事业部、SKU、月份、销量；支持中英文表头。";
         sheet.Cell(3, 1).Value = "缺失月份会在同一事业部和SKU的首尾月份之间补为0。";
-        sheet.Cell(4, 1).Value = "参数搜索工作表按事业部和SKU区分候选模型，排名按综合评分从低到高。";
-        sheet.Cell(5, 1).Value = "综合评分由sMAPE、WAPE和归一化MAE组成；季节模型还需满足改善阈值。";
+        sheet.Cell(4, 1).Value = "参数搜索结果按事业部、SKU和排名排序，并自动拆分到多个参数搜索工作表。";
+        sheet.Cell(5, 1).Value = "每个参数搜索工作表最多写入900000行数据，低于Excel单表1048576行的限制。";
         sheet.Columns().AdjustToContents();
     }
 
@@ -182,8 +251,11 @@ public static class ExcelForecastRunner
 
     private static void FormatTable(IXLWorksheet sheet, int lastRow, int columnCount)
     {
+        const int maxExcelRow = 1_048_576;
+        lastRow = Math.Min(lastRow, maxExcelRow);
         if (lastRow < 1)
             return;
+
         sheet.Range(1, 1, lastRow, columnCount).SetAutoFilter();
         sheet.SheetView.FreezeRows(1);
         sheet.Columns().AdjustToContents();
@@ -212,14 +284,17 @@ public static class ExcelForecastRunner
     {
         if (cell.TryGetValue<DateTime>(out var date))
             return new DateTime(date.Year, date.Month, 1);
+
         var text = cell.GetString().Trim();
         if (DateTime.TryParse(text, out date))
             return new DateTime(date.Year, date.Month, 1);
+
         if (double.TryParse(text, out var serial) && serial > 0)
         {
             date = DateTime.FromOADate(serial);
             return new DateTime(date.Year, date.Month, 1);
         }
+
         throw new InvalidDataException($"无法解析月份：{cell.Address}={cell.GetString()}。");
     }
 
@@ -227,9 +302,11 @@ public static class ExcelForecastRunner
     {
         if (cell.TryGetValue<double>(out var quantity) && double.IsFinite(quantity))
             return Math.Max(0, quantity);
+
         var text = cell.GetString().Trim();
         if (double.TryParse(text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out quantity))
             return Math.Max(0, quantity);
+
         throw new InvalidDataException($"无法解析销量：{cell.Address}={cell.GetString()}。");
     }
 }
