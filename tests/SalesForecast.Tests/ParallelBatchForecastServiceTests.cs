@@ -3,21 +3,17 @@ using Xunit;
 
 namespace SalesForecast.Tests;
 
-/// <summary>
-/// 并行批量预测服务的核心行为测试。
-/// </summary>
+/// <summary>并行批量预测服务的核心行为测试。</summary>
 public sealed class ParallelBatchForecastServiceTests
 {
     [Fact]
     public async Task Groups_data_fills_missing_months_and_reports_completion()
     {
-        // 构造两个事业部，每个事业部包含一个SKU和35个月的有效记录。
         var rows = new List<MonthlySalesRecord>();
         foreach (var businessUnit in new[] { "BU-A", "BU-B" })
         {
             for (var i = 0; i < 36; i++)
             {
-                // 故意缺少第4个月，用于验证程序是否补零。
                 if (i == 3)
                     continue;
 
@@ -32,69 +28,72 @@ public sealed class ParallelBatchForecastServiceTests
         }
 
         var reports = new List<ForecastProgress>();
-        var progress = new Progress<ForecastProgress>(reports.Add);
+        var result = await new ParallelBatchForecastService(maxDegreeOfParallelism: 2)
+            .ProcessAsync(rows, progress: new Progress<ForecastProgress>(reports.Add));
 
-        var result = await new ParallelBatchForecastService(
-                maxDegreeOfParallelism: 2)
-            .ProcessAsync(rows, progress: progress);
-
-        Assert.Equal(
-            2,
-            result.Summaries.Count(x => x.Status == "Success"));
-
-        // 每个分组应生成30个月训练明细和6个月测试明细。
+        Assert.Equal(2, result.Summaries.Count(x => x.Status == "Success"));
         Assert.Equal(72, result.Details.Count);
-
-        Assert.Contains(
-            result.Details,
-            x => x.DataType == "Train"
-                && x.Month == new DateTime(2023, 4, 1)
-                && x.ActualQuantity == 0);
-
-        // 并行完成顺序可能不同，但最大进度必须达到100%。
+        Assert.Contains(result.Details, x => x.DataType == "Train"
+            && x.Month == new DateTime(2023, 4, 1)
+            && x.ActualQuantity == 0);
         Assert.Equal(100, reports.Max(x => x.Percentage));
         Assert.Equal(2, reports.Max(x => x.Completed));
     }
 
     [Fact]
-    public async Task Insufficient_group_does_not_stop_other_groups()
+    public async Task Short_history_is_split_dynamically()
     {
-        // 一个数据完整的分组和一个历史数据不足的分组。
-        var valid = Enumerable.Range(0, 36).Select(i => new MonthlySalesRecord
+        var rows = Enumerable.Range(0, 5).Select(i => new MonthlySalesRecord
+        {
+            BusinessUnit = "BU-SHORT",
+            Sku = "SKU-1",
+            Month = new DateTime(2024, 1, 1).AddMonths(i),
+            Quantity = 10 + i
+        });
+
+        var result = await new ParallelBatchForecastService().ProcessAsync(rows);
+        var summary = Assert.Single(result.Summaries);
+
+        Assert.Equal("Success", summary.Status);
+        Assert.Equal(new DateTime(2024, 1, 1), summary.TrainStartMonth);
+        Assert.Equal(new DateTime(2024, 3, 1), summary.TrainEndMonth);
+        Assert.Equal(new DateTime(2024, 4, 1), summary.TestStartMonth);
+        Assert.Equal(new DateTime(2024, 5, 1), summary.TestEndMonth);
+        Assert.Equal(5, result.Details.Count);
+        Assert.Equal(3, result.Details.Count(x => x.DataType == "Train"));
+        Assert.Equal(2, result.Details.Count(x => x.DataType == "Test"));
+    }
+
+    [Fact]
+    public async Task Very_short_history_is_skipped_without_stopping_other_groups()
+    {
+        var valid = Enumerable.Range(0, 6).Select(i => new MonthlySalesRecord
         {
             BusinessUnit = "BU-OK",
             Sku = "SKU-1",
-            Month = new DateTime(2023, 1, 1).AddMonths(i),
+            Month = new DateTime(2024, 1, 1).AddMonths(i),
             Quantity = 100 + i
         });
-
-        var invalid = Enumerable.Range(0, 5).Select(i => new MonthlySalesRecord
+        var skipped = Enumerable.Range(0, 2).Select(i => new MonthlySalesRecord
         {
-            BusinessUnit = "BU-BAD",
+            BusinessUnit = "BU-SKIP",
             Sku = "SKU-1",
-            Month = new DateTime(2023, 1, 1).AddMonths(i),
+            Month = new DateTime(2024, 1, 1).AddMonths(i),
             Quantity = 1
         });
 
-        var result = await new ParallelBatchForecastService(
-                maxDegreeOfParallelism: 2)
-            .ProcessAsync(valid.Concat(invalid));
+        var result = await new ParallelBatchForecastService(maxDegreeOfParallelism: 2)
+            .ProcessAsync(valid.Concat(skipped));
 
-        Assert.Contains(
-            result.Summaries,
-            x => x.BusinessUnit == "BU-OK"
-                && x.Status == "Success");
-
-        Assert.Contains(
-            result.Summaries,
-            x => x.BusinessUnit == "BU-BAD"
-                && x.Status == "Failed");
+        Assert.Contains(result.Summaries, x => x.BusinessUnit == "BU-OK"
+            && x.Status == "Success");
+        Assert.Contains(result.Summaries, x => x.BusinessUnit == "BU-SKIP"
+            && x.Status == "Skipped");
     }
 
     [Fact]
     public async Task Cancellation_is_propagated()
     {
-        // 已取消的令牌应直接抛出OperationCanceledException。
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 

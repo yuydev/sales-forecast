@@ -3,14 +3,11 @@ using System.Diagnostics;
 
 namespace SalesForecast;
 
-/// <summary>
-/// 按事业部和SKU并行执行预测的服务。
-/// 一个分组对应一个独立的月度时间序列。
-/// </summary>
+/// <summary>按事业部和SKU并行执行预测的服务。</summary>
 public sealed class ParallelBatchForecastService
 {
-    private readonly int trainLength;
-    private readonly int horizon;
+    private readonly int defaultTrainLength;
+    private readonly int defaultHorizon;
     private readonly int seasonLength;
     private readonly int maxDegreeOfParallelism;
 
@@ -23,25 +20,18 @@ public sealed class ParallelBatchForecastService
         if (trainLength <= 0 || horizon <= 0 || seasonLength <= 1)
             throw new ArgumentOutOfRangeException();
 
-        this.trainLength = trainLength;
-        this.horizon = horizon;
+        defaultTrainLength = trainLength;
+        defaultHorizon = horizon;
         this.seasonLength = seasonLength;
-
-        // 默认保留一个CPU核心给系统和其他应用使用。
-        maxDegreeOfParallelism ??= Math.Max(
-            1,
-            Environment.ProcessorCount - 1);
+        maxDegreeOfParallelism ??= Math.Max(1, Environment.ProcessorCount - 1);
 
         if (maxDegreeOfParallelism <= 0)
-            throw new ArgumentOutOfRangeException(
-                nameof(maxDegreeOfParallelism));
+            throw new ArgumentOutOfRangeException(nameof(maxDegreeOfParallelism));
 
         this.maxDegreeOfParallelism = maxDegreeOfParallelism.Value;
     }
 
-    /// <summary>
-    /// 并行处理全部事业部和SKU。
-    /// </summary>
+    /// <summary>并行处理全部事业部和SKU。</summary>
     public async Task<BatchForecastResult> ProcessAsync(
         IEnumerable<MonthlySalesRecord> source,
         bool useLatestHistory = true,
@@ -50,7 +40,6 @@ public sealed class ParallelBatchForecastService
     {
         ArgumentNullException.ThrowIfNull(source);
 
-        // 先在主线程完成分组，避免并行期间重复枚举输入数据。
         var groups = source
             .GroupBy(x => new
             {
@@ -65,7 +54,6 @@ public sealed class ParallelBatchForecastService
         var completed = 0;
         var watch = Stopwatch.StartNew();
 
-        // 使用受控并行，避免SKU数量较大时占满线程池和CPU。
         await Parallel.ForEachAsync(
             groups,
             new ParallelOptions
@@ -85,11 +73,7 @@ public sealed class ParallelBatchForecastService
                     token);
 
                 results.Add(result);
-
-                // Interlocked保证多个并行任务更新完成数时不会发生竞争。
                 var current = Interlocked.Increment(ref completed);
-
-                // 预计剩余时间可能未知，因此使用可空的TimeSpan。
                 TimeSpan? remaining = current == 0
                     ? null
                     : TimeSpan.FromSeconds(
@@ -113,9 +97,7 @@ public sealed class ParallelBatchForecastService
                 });
             });
 
-        // ConcurrentBag不保证顺序，输出前重新排序保证结果稳定。
         var output = new BatchForecastResult();
-
         foreach (var result in results
             .OrderBy(x => x.BusinessUnit)
             .ThenBy(x => x.Sku))
@@ -123,28 +105,23 @@ public sealed class ParallelBatchForecastService
             if (result.Summary != null)
                 output.Summaries.Add(result.Summary);
 
-            output.Details.AddRange(
-                result.Details.OrderBy(x => x.Month));
+            output.Details.AddRange(result.Details.OrderBy(x => x.Month));
         }
 
         return output;
     }
 
-    /// <summary>同步调用入口，异步应用建议优先使用ProcessAsync。</summary>
+    /// <summary>同步调用入口。</summary>
     public BatchForecastResult Process(
         IEnumerable<MonthlySalesRecord> source,
         bool useLatestHistory = true,
         IProgress<ForecastProgress>? progress = null,
         CancellationToken cancellationToken = default) =>
-        ProcessAsync(
-            source,
-            useLatestHistory,
-            progress,
-            cancellationToken)
-        .GetAwaiter()
-        .GetResult();
+        ProcessAsync(source, useLatestHistory, progress, cancellationToken)
+            .GetAwaiter()
+            .GetResult();
 
-    /// <summary>处理单个事业部和SKU分组。</summary>
+    /// <summary>处理单个事业部和SKU分组，并按历史长度动态划分训练集和验证集。</summary>
     private GroupResult ProcessGroup(
         string businessUnit,
         string sku,
@@ -157,38 +134,41 @@ public sealed class ParallelBatchForecastService
             cancellationToken.ThrowIfCancellationRequested();
 
             var data = Normalize(source);
-            if (data.Count < trainLength + horizon)
+            var historyLength = data.Count;
+
+            // 少于3个月没有足够信息，不执行模型计算，但保留跳过记录。
+            if (historyLength < 3)
             {
-                return Failed(
+                return Skipped(
                     businessUnit,
                     sku,
-                    $"至少需要{trainLength + horizon}个月历史数据。");
+                    $"历史月份只有{historyLength}个月，少于3个月，跳过计算。");
             }
 
-            // 默认取最近36个月：前30个月训练，后6个月测试。
+            // 36个月以上保持原规则；36个月以内使用该SKU的全部历史数据。
+            var selectedLength = Math.Min(historyLength, defaultTrainLength + defaultHorizon);
             var selected = (useLatestHistory
-                    ? data.OrderByDescending(x => x.Month)
-                        .Take(trainLength + horizon)
-                    : data.Take(trainLength + horizon))
+                    ? data.OrderByDescending(x => x.Month).Take(selectedLength)
+                    : data.Take(selectedLength))
                 .OrderBy(x => x.Month)
                 .ToList();
 
+            var (trainLength, validationLength) = GetSplitLength(selected.Count);
             var train = selected.Take(trainLength).ToList();
-            var test = selected.Skip(trainLength).ToList();
+            var validation = selected.Skip(trainLength).Take(validationLength).ToList();
             var values = selected.Select(x => x.Quantity).ToArray();
 
             var model = HoltWintersForecaster.SearchBest(
                 values,
                 trainLength,
-                horizon,
+                validationLength,
                 seasonLength);
 
             var forecast = model.Forecast;
             var metrics = HoltWintersForecaster.CalculateMetrics(
-                test.Select(x => x.Quantity).ToArray(),
+                validation.Select(x => x.Quantity).ToArray(),
                 forecast);
 
-            // 生成训练集和测试集逐月明细。
             var details = new List<ForecastDetailRecord>();
             foreach (var item in train)
             {
@@ -204,14 +184,12 @@ public sealed class ParallelBatchForecastService
 
             double absoluteErrorTotal = 0;
             double actualTotal = 0;
-
-            for (var i = 0; i < test.Count; i++)
+            for (var i = 0; i < validation.Count; i++)
             {
-                var actual = test[i].Quantity;
+                var actual = validation[i].Quantity;
                 var predicted = Math.Max(0, forecast[i]);
                 var error = predicted - actual;
                 var absoluteError = Math.Abs(error);
-
                 absoluteErrorTotal += absoluteError;
                 actualTotal += actual;
 
@@ -219,19 +197,15 @@ public sealed class ParallelBatchForecastService
                 {
                     BusinessUnit = businessUnit,
                     Sku = sku,
-                    Month = test[i].Month,
+                    Month = validation[i].Month,
                     DataType = "Test",
                     MonthIndex = i + 1,
                     ActualQuantity = actual,
                     ForecastQuantity = predicted,
                     Error = error,
                     AbsoluteError = absoluteError,
-                    AbsolutePercentageError = actual > 0
-                        ? absoluteError / actual
-                        : null,
-                    Wape = actual > 0
-                        ? absoluteError / actual
-                        : null,
+                    AbsolutePercentageError = actual > 0 ? absoluteError / actual : null,
+                    Wape = actual > 0 ? absoluteError / actual : null,
                     CumulativeWape = actualTotal > 0
                         ? absoluteErrorTotal / actualTotal
                         : null,
@@ -244,15 +218,15 @@ public sealed class ParallelBatchForecastService
                 BusinessUnit = businessUnit,
                 Sku = sku,
                 Success = true,
-                Message = "预测完成",
+                Message = $"预测完成（训练{trainLength}个月，验证{validationLength}个月）",
                 Summary = new ForecastSummaryRecord
                 {
                     BusinessUnit = businessUnit,
                     Sku = sku,
                     TrainStartMonth = train[0].Month,
                     TrainEndMonth = train[^1].Month,
-                    TestStartMonth = test[0].Month,
-                    TestEndMonth = test[^1].Month,
+                    TestStartMonth = validation[0].Month,
+                    TestEndMonth = validation[^1].Month,
                     ModelType = model.ModelType,
                     Alpha = model.Alpha,
                     Beta = model.Beta,
@@ -267,7 +241,7 @@ public sealed class ParallelBatchForecastService
                     SeasonalModelAccepted = model.SeasonalModelAccepted,
                     SeasonalImprovement = model.SeasonalImprovement,
                     TrainQuantity = train.Sum(x => x.Quantity),
-                    TestActualQuantity = test.Sum(x => x.Quantity),
+                    TestActualQuantity = validation.Sum(x => x.Quantity),
                     TestForecastQuantity = forecast.Sum(),
                     Status = "Success"
                 },
@@ -276,15 +250,51 @@ public sealed class ParallelBatchForecastService
         }
         catch (OperationCanceledException)
         {
-            // 取消异常必须继续向上传播，不能当作普通SKU失败处理。
             throw;
         }
         catch (Exception ex)
         {
-            // 普通单SKU异常只记录失败，不影响其他SKU继续运行。
             return Failed(businessUnit, sku, ex.Message);
         }
     }
+
+    /// <summary>
+    /// 根据补齐后的月份数计算训练/验证比例。
+    /// 3-5个月固定最后2个月验证；6-35个月按约3:1划分；36个月以上为30:6。
+    /// </summary>
+    private (int TrainLength, int ValidationLength) GetSplitLength(int monthCount)
+    {
+        if (monthCount >= defaultTrainLength + defaultHorizon)
+            return (defaultTrainLength, defaultHorizon);
+
+        if (monthCount < 6)
+            return (monthCount - 2, 2);
+
+        var validationLength = Math.Max(
+            2,
+            (int)Math.Round(monthCount / 4d, MidpointRounding.AwayFromZero));
+
+        return (monthCount - validationLength, validationLength);
+    }
+
+    private static GroupResult Skipped(
+        string businessUnit,
+        string sku,
+        string message) =>
+        new()
+        {
+            BusinessUnit = businessUnit,
+            Sku = sku,
+            Success = false,
+            Message = message,
+            Summary = new ForecastSummaryRecord
+            {
+                BusinessUnit = businessUnit,
+                Sku = sku,
+                Status = "Skipped",
+                ErrorMessage = message
+            }
+        };
 
     private static GroupResult Failed(
         string businessUnit,
@@ -305,17 +315,12 @@ public sealed class ParallelBatchForecastService
             }
         };
 
-    /// <summary>
-    /// 按月份聚合数据，并将起止月份之间的缺失月份补为0。
-    /// </summary>
+    /// <summary>按月聚合数据，并把起止月份之间的缺失月份补为0。</summary>
     private static List<MonthlySalesRecord> Normalize(
         IEnumerable<MonthlySalesRecord> source)
     {
         var values = source
-            .GroupBy(x => new DateTime(
-                x.Month.Year,
-                x.Month.Month,
-                1))
+            .GroupBy(x => new DateTime(x.Month.Year, x.Month.Month, 1))
             .ToDictionary(
                 x => x.Key,
                 x => x.Sum(y => Math.Max(0, y.Quantity)));
