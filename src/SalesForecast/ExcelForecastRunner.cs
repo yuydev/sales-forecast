@@ -6,6 +6,7 @@ namespace SalesForecast;
 public static class ExcelForecastRunner
 {
     private const int MaxRowsPerCandidateSheet = 900_000;
+    private const int MaxCandidatesPerSku = 100;
 
     private static readonly string[] BusinessUnitHeaders = ["BusinessUnit", "Business Unit", "事业部", "事业部编码"];
     private static readonly string[] SkuHeaders = ["Sku", "SKU", "sku", "物料编码", "商品编码"];
@@ -95,7 +96,7 @@ public static class ExcelForecastRunner
     }
 
     /// <summary>
-    /// 将参数搜索结果自动拆分到多个工作表，避免超过Excel单表最大行数。
+    /// 将每个事业部和SKU的前100名候选模型拆分到多个工作表，避免输出文件过大。
     /// </summary>
     private static void AddCandidateSheets(
         XLWorkbook workbook,
@@ -107,7 +108,12 @@ public static class ExcelForecastRunner
             "季节周期", "验证集sMAPE", "验证集WAPE", "验证集MAE", "综合评分", "是否选中"
         };
 
+        // 每个事业部和SKU只保留综合评分排名前100的候选模型。
         var ordered = candidates
+            .GroupBy(x => new { x.BusinessUnit, x.Sku })
+            .SelectMany(group => group
+                .OrderBy(x => x.Rank)
+                .Take(MaxCandidatesPerSku))
             .OrderBy(x => x.BusinessUnit)
             .ThenBy(x => x.Sku)
             .ThenBy(x => x.Rank)
@@ -234,8 +240,8 @@ public static class ExcelForecastRunner
         sheet.Cell(1, 1).Value = "说明";
         sheet.Cell(2, 1).Value = "输入表第一行必须包含：事业部、SKU、月份、销量；支持中英文表头。";
         sheet.Cell(3, 1).Value = "缺失月份会在同一事业部和SKU的首尾月份之间补为0。";
-        sheet.Cell(4, 1).Value = "参数搜索结果按事业部、SKU和排名排序，并自动拆分到多个参数搜索工作表。";
-        sheet.Cell(5, 1).Value = "每个参数搜索工作表最多写入900000行数据，低于Excel单表1048576行的限制。";
+        sheet.Cell(4, 1).Value = "参数搜索结果按事业部、SKU和排名排序，每个SKU只导出综合评分前100名候选模型。";
+        sheet.Cell(5, 1).Value = "参数搜索结果自动拆分到多个工作表，每个工作表最多写入900000行数据。";
         sheet.Columns().AdjustToContents();
     }
 
