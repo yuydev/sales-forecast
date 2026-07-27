@@ -15,22 +15,6 @@ public sealed class ForecastMetrics
     public double Mae { get; init; }
 }
 
-/// <summary>单个候选模型的参数、验证指标和排名。</summary>
-public sealed class ForecastCandidateRecord
-{
-    public int Rank { get; init; }
-    public ForecastModelType ModelType { get; init; }
-    public double Alpha { get; init; }
-    public double Beta { get; init; }
-    public double Gamma { get; init; }
-    public int SeasonLength { get; init; }
-    public double ValidationSmape { get; init; }
-    public double ValidationWape { get; init; }
-    public double ValidationMae { get; init; }
-    public double Score { get; init; }
-    public bool IsSelected { get; init; }
-}
-
 public sealed class ForecastResult
 {
     public ForecastModelType ModelType { get; init; }
@@ -63,7 +47,9 @@ public static class HoltWintersForecaster
             foreach (var beta in Parameters())
             {
                 candidates.Add(Evaluate(values, ForecastModelType.Holt, alpha, beta, 0, 0, trainLength, horizon));
-                if (trainLength < seasonLength * 2) continue;
+                if (trainLength < seasonLength * 2)
+                    continue;
+
                 foreach (var gamma in Parameters())
                 {
                     candidates.Add(Evaluate(values, ForecastModelType.HoltWintersAdditive, alpha, beta, gamma, seasonLength, trainLength, horizon));
@@ -73,7 +59,8 @@ public static class HoltWintersForecaster
         }
 
         var valid = candidates.Where(x => double.IsFinite(x.ValidationScore)).ToList();
-        if (valid.Count == 0) throw new InvalidOperationException("没有找到有效的预测模型。");
+        if (valid.Count == 0)
+            throw new InvalidOperationException("没有找到有效的预测模型。");
 
         var nonSeasonal = valid.Where(x => !IsSeasonal(x.ModelType)).OrderBy(x => x.ValidationScore).First();
         var seasonal = valid.Where(x => IsSeasonal(x.ModelType)).OrderBy(x => x.ValidationScore).FirstOrDefault();
@@ -122,14 +109,26 @@ public static class HoltWintersForecaster
     public static ForecastMetrics CalculateMetrics(IReadOnlyList<double> actual, IReadOnlyList<double> predicted)
     {
         var count = Math.Min(actual.Count, predicted.Count);
-        if (count == 0) return new ForecastMetrics { Smape = double.MaxValue, Wape = double.MaxValue, Mae = double.MaxValue };
-        double absoluteError = 0, actualTotal = 0, smape = 0; var smapeCount = 0;
+        if (count == 0)
+            return new ForecastMetrics { Smape = double.MaxValue, Wape = double.MaxValue, Mae = double.MaxValue };
+
+        double absoluteError = 0, actualTotal = 0, smape = 0;
+        var smapeCount = 0;
         for (var i = 0; i < count; i++)
         {
-            var a = Math.Max(0, actual[i]); var p = Math.Max(0, predicted[i]); var error = Math.Abs(a - p); var denominator = a + p;
-            absoluteError += error; actualTotal += a;
-            if (denominator > Epsilon) { smape += 2 * error / denominator; smapeCount++; }
+            var a = Math.Max(0, actual[i]);
+            var p = Math.Max(0, predicted[i]);
+            var error = Math.Abs(a - p);
+            absoluteError += error;
+            actualTotal += a;
+            var denominator = a + p;
+            if (denominator > Epsilon)
+            {
+                smape += 2 * error / denominator;
+                smapeCount++;
+            }
         }
+
         return new ForecastMetrics
         {
             Smape = smapeCount == 0 ? (absoluteError <= Epsilon ? 0 : double.MaxValue) : smape / smapeCount,
@@ -158,19 +157,45 @@ public static class HoltWintersForecaster
                 var predicted = Forecast(values.Take(end).ToArray(), type, alpha, beta, gamma, seasonLength, horizon);
                 metrics.Add(CalculateMetrics(values.Skip(end).Take(horizon).ToArray(), predicted));
             }
-            catch (ArgumentException) { return InvalidResult(type, alpha, beta, gamma, seasonLength); }
+            catch (ArgumentException)
+            {
+                return InvalidResult(type, alpha, beta, gamma, seasonLength);
+            }
         }
-        if (metrics.Count == 0) return InvalidResult(type, alpha, beta, gamma, seasonLength);
-        var average = new ForecastMetrics { Smape = metrics.Average(x => x.Smape), Wape = metrics.Average(x => x.Wape), Mae = metrics.Average(x => x.Mae) };
-        return new ForecastResult { ModelType = type, Alpha = alpha, Beta = beta, Gamma = gamma, SeasonLength = seasonLength, ValidationMetrics = average, ValidationScore = Score(average, values.Take(trainLength).DefaultIfEmpty().Average()) };
+
+        if (metrics.Count == 0)
+            return InvalidResult(type, alpha, beta, gamma, seasonLength);
+
+        var average = new ForecastMetrics
+        {
+            Smape = metrics.Average(x => x.Smape),
+            Wape = metrics.Average(x => x.Wape),
+            Mae = metrics.Average(x => x.Mae)
+        };
+
+        return new ForecastResult
+        {
+            ModelType = type,
+            Alpha = alpha,
+            Beta = beta,
+            Gamma = gamma,
+            SeasonLength = seasonLength,
+            ValidationMetrics = average,
+            ValidationScore = Score(average, values.Take(trainLength).DefaultIfEmpty().Average())
+        };
     }
 
     private static IEnumerable<int> BuildValidationEnds(int trainLength, int horizon, int minimumTrain)
     {
         var ends = new List<int>();
-        for (var end = minimumTrain; end + horizon <= trainLength; end += horizon) ends.Add(end);
-        if (ends.Count == 0 && trainLength >= minimumTrain) ends.Add(trainLength);
-        else if (ends.Count > 0 && ends[^1] != trainLength) ends.Add(trainLength);
+        for (var end = minimumTrain; end + horizon <= trainLength; end += horizon)
+            ends.Add(end);
+
+        if (ends.Count == 0 && trainLength >= minimumTrain)
+            ends.Add(trainLength);
+        else if (ends.Count > 0 && ends[^1] != trainLength)
+            ends.Add(trainLength);
+
         return ends;
     }
 
@@ -182,8 +207,13 @@ public static class HoltWintersForecaster
 
     private static ForecastResult InvalidResult(ForecastModelType type, double alpha, double beta, double gamma, int seasonLength) => new()
     {
-        ModelType = type, Alpha = alpha, Beta = beta, Gamma = gamma, SeasonLength = seasonLength,
-        ValidationMetrics = new ForecastMetrics { Smape = double.MaxValue, Wape = double.MaxValue, Mae = double.MaxValue }, ValidationScore = double.MaxValue
+        ModelType = type,
+        Alpha = alpha,
+        Beta = beta,
+        Gamma = gamma,
+        SeasonLength = seasonLength,
+        ValidationMetrics = new ForecastMetrics { Smape = double.MaxValue, Wape = double.MaxValue, Mae = double.MaxValue },
+        ValidationScore = double.MaxValue
     };
 
     private static IEnumerable<double> Parameters() { for (var i = 1; i <= 19; i++) yield return i * 0.05; }
