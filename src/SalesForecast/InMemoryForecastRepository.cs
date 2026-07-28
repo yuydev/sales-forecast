@@ -15,7 +15,7 @@ public sealed class InMemoryForecastRepository : IForecastRepository
         foreach (var row in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var market = ParallelBatchForecastService.NormalizeMarket(row.Market, row.BusinessUnit);
+            var market = MarketKeyNormalizer.NormalizeMarket(row.Market, row.BusinessUnit);
             var sku = row.Sku.Trim();
             var month = new DateTime(row.Month.Year, row.Month.Month, 1);
             var normalized = new MonthlySalesRecord
@@ -33,7 +33,7 @@ public sealed class InMemoryForecastRepository : IForecastRepository
 
     public Task<IReadOnlyList<MonthlySalesRecord>> GetMonthlySalesAsync(string market, string sku, CancellationToken cancellationToken = default)
     {
-        var normalizedMarket = ParallelBatchForecastService.NormalizeMarket(market, market);
+        var normalizedMarket = MarketKeyNormalizer.NormalizeMarket(market, market);
         var normalizedSku = sku.Trim();
         IReadOnlyList<MonthlySalesRecord> rows = monthlySales.Values
             .Where(x => string.Equals(x.Market, normalizedMarket, StringComparison.OrdinalIgnoreCase)
@@ -45,7 +45,7 @@ public sealed class InMemoryForecastRepository : IForecastRepository
 
     public Task<ForecastParameterRecord?> GetLatestParameterAsync(string market, string sku, CancellationToken cancellationToken = default)
     {
-        var key = (ParallelBatchForecastService.NormalizeMarket(market, market), sku.Trim());
+        var key = (MarketKeyNormalizer.NormalizeMarket(market, market), sku.Trim());
         if (!parameters.TryGetValue(key, out var list) || list.Count == 0)
             return Task.FromResult<ForecastParameterRecord?>(null);
         return Task.FromResult<ForecastParameterRecord?>(list.OrderByDescending(x => x.ParameterVersion).First());
@@ -53,7 +53,7 @@ public sealed class InMemoryForecastRepository : IForecastRepository
 
     public Task<ForecastParameterRecord> SaveParameterAsync(ForecastParameterRecord parameter, IReadOnlyCollection<ForecastCandidateRecord> candidatesToSave, CancellationToken cancellationToken = default)
     {
-        var market = ParallelBatchForecastService.NormalizeMarket(parameter.Market, parameter.Market);
+        var market = MarketKeyNormalizer.NormalizeMarket(parameter.Market, parameter.Market);
         var sku = parameter.Sku.Trim();
         var key = (market, sku);
         var list = parameters.GetOrAdd(key, _ => []);
@@ -117,7 +117,7 @@ public sealed class InMemoryForecastRepository : IForecastRepository
         foreach (var row in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var market = ParallelBatchForecastService.NormalizeMarket(row.Market, row.Market);
+            var market = MarketKeyNormalizer.NormalizeMarket(row.Market, row.Market);
             var sku = row.Sku.Trim();
             var forecastMonth = NormalizeMonth(row.ForecastMonth);
             forecasts[(market, sku, forecastMonth)] = new ForecastPredictionRecord

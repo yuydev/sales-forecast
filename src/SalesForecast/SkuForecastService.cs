@@ -10,9 +10,9 @@ public sealed class SkuForecastService(IForecastRepository repository)
         var market = request.Market.Trim();
         var sku = request.Sku.Trim();
         if (string.IsNullOrWhiteSpace(market))
-            throw new ArgumentException("市场不能为空。", nameof(request));
+            throw new ArgumentException("市场不能为空。", nameof(request.Market));
         if (string.IsNullOrWhiteSpace(sku))
-            throw new ArgumentException("SKU不能为空。", nameof(request));
+            throw new ArgumentException("SKU不能为空。", nameof(request.Sku));
         if (request.Horizon <= 0)
             throw new ArgumentOutOfRangeException(nameof(request), "预测月数必须大于0。");
         if (request.SearchTrainLength <= 0 || request.SearchHorizon <= 0 || request.SeasonLength <= 1)

@@ -234,11 +234,5 @@ public sealed class ParallelBatchForecastService
         public List<ForecastCandidateRecord> Candidates { get; init; } = new();
     }
 
-    internal static string NormalizeMarket(string market, string businessUnit)
-    {
-        var normalizedMarket = (market ?? string.Empty).Trim();
-        if (!string.IsNullOrWhiteSpace(normalizedMarket))
-            return normalizedMarket;
-        return (businessUnit ?? string.Empty).Trim();
-    }
+    internal static string NormalizeMarket(string market, string businessUnit) => MarketKeyNormalizer.NormalizeMarket(market, businessUnit);
 }

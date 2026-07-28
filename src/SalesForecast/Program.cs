@@ -97,7 +97,10 @@ static async Task<int> RunExcelForecastAsync(string[] args, CancellationToken ca
 static async Task<int> RunDatabaseImportAsync(string[] args, CancellationToken cancellationToken)
 {
     if (args.Length < 2)
-        throw new ArgumentException("用法：dotnet run -- db-import <输入Excel路径> [连接字符串]");
+    {
+        Console.Error.WriteLine("用法：dotnet run -- db-import <输入Excel路径> [连接字符串]");
+        return 1;
+    }
 
     var inputPath = args[1];
     var repository = BuildRepository(args.Length > 2 ? args[2] : null);
@@ -110,7 +113,10 @@ static async Task<int> RunDatabaseImportAsync(string[] args, CancellationToken c
 static async Task<int> RunDatabaseSkuForecastAsync(string[] args, CancellationToken cancellationToken)
 {
     if (args.Length < 5)
-        throw new ArgumentException("用法：dotnet run -- db-forecast-sku <市场> <SKU> <起始月份yyyy-MM> <预测月数> [--search-parameter-if-missing] [连接字符串]");
+    {
+        Console.Error.WriteLine("用法：dotnet run -- db-forecast-sku <市场> <SKU> <起始月份yyyy-MM> <预测月数> [--search-parameter-if-missing] [连接字符串]");
+        return 1;
+    }
 
     var market = args[1];
     var sku = args[2];

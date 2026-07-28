@@ -13,7 +13,7 @@
 ## 1. Excel 批量预测（保持兼容）
 
 ```bash
-dotnet run --project /home/runner/work/sales-forecast/sales-forecast/src/SalesForecast -- <输入Excel> <输出Excel> [并发数] [训练月数] [预测月数] [季节周期]
+dotnet run --project src/SalesForecast -- <输入Excel> <输出Excel> [并发数] [训练月数] [预测月数] [季节周期]
 ```
 
 输入支持列名：
@@ -36,7 +36,7 @@ dotnet run --project /home/runner/work/sales-forecast/sales-forecast/src/SalesFo
 执行 schema：
 
 ```sql
-SOURCE /home/runner/work/sales-forecast/sales-forecast/src/SalesForecast/database/mysql-schema.sql;
+SOURCE src/SalesForecast/database/mysql-schema.sql;
 ```
 
 或复制文件内容在数据库执行。
@@ -53,14 +53,14 @@ export SALES_FORECAST_DB_CONNECTION_STRING="Server=127.0.0.1;Port=3306;Database=
 
 示例模板见：
 
-- `/home/runner/work/sales-forecast/sales-forecast/.env.example`
+- `./.env.example`
 
 > 不要提交真实密码。
 
 ## 4. 历史数据导入（幂等）
 
 ```bash
-dotnet run --project /home/runner/work/sales-forecast/sales-forecast/src/SalesForecast -- db-import <输入Excel路径> [连接字符串]
+dotnet run --project src/SalesForecast -- db-import <输入Excel路径> [连接字符串]
 ```
 
 规则：
@@ -73,7 +73,7 @@ dotnet run --project /home/runner/work/sales-forecast/sales-forecast/src/SalesFo
 ## 5. 按市场+SKU+起始月份预测并落库
 
 ```bash
-dotnet run --project /home/runner/work/sales-forecast/sales-forecast/src/SalesForecast -- db-forecast-sku <市场> <SKU> <起始月份yyyy-MM> <预测月数> [--search-parameter-if-missing] [连接字符串]
+dotnet run --project src/SalesForecast -- db-forecast-sku <市场> <SKU> <起始月份yyyy-MM> <预测月数> [--search-parameter-if-missing] [连接字符串]
 ```
 
 行为：
@@ -112,7 +112,7 @@ dotnet run --project /home/runner/work/sales-forecast/sales-forecast/src/SalesFo
 运行：
 
 ```bash
-dotnet test /home/runner/work/sales-forecast/sales-forecast/tests/SalesForecast.Tests/SalesForecast.Tests.csproj
+dotnet test tests/SalesForecast.Tests/SalesForecast.Tests.csproj
 ```
 
 > 当前未包含真实 MySQL 集成测试；如需集成验证，请在可用 MySQL 环境中执行 schema 后运行 `db-import` 与 `db-forecast-sku` 命令。

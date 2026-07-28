@@ -74,7 +74,7 @@ public static class ExcelForecastRunner
 
             rows.Add(new MonthlySalesRecord
             {
-                Market = ParallelBatchForecastService.NormalizeMarket(market, businessUnit),
+                Market = MarketKeyNormalizer.NormalizeMarket(market, businessUnit),
                 BusinessUnit = businessUnit,
                 Sku = sku,
                 Month = ReadMonth(row.Cell(monthColumn)),

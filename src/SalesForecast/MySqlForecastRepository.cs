@@ -5,6 +5,7 @@ namespace SalesForecast;
 
 public sealed class MySqlForecastRepository(string connectionString) : IForecastRepository
 {
+    private const int MaxCandidatesToSave = 100;
     private readonly string connectionString = string.IsNullOrWhiteSpace(connectionString)
         ? throw new ArgumentException("数据库连接字符串不能为空。", nameof(connectionString))
         : connectionString;
@@ -25,7 +26,7 @@ public sealed class MySqlForecastRepository(string connectionString) : IForecast
         foreach (var row in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var market = ParallelBatchForecastService.NormalizeMarket(row.Market, row.BusinessUnit);
+            var market = MarketKeyNormalizer.NormalizeMarket(row.Market, row.BusinessUnit);
             await connection.ExecuteAsync(new CommandDefinition(
                 sql,
                 new
@@ -217,7 +218,7 @@ public sealed class MySqlForecastRepository(string connectionString) : IForecast
             transaction,
             cancellationToken: cancellationToken));
 
-        foreach (var candidate in candidates.OrderBy(x => x.Rank).Take(100))
+        foreach (var candidate in candidates.OrderBy(x => x.Rank).Take(MaxCandidatesToSave))
         {
             await connection.ExecuteAsync(new CommandDefinition(
                 insertCandidateSql,
