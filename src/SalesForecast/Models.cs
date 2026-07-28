@@ -3,6 +3,7 @@ namespace SalesForecast;
 public sealed class MonthlySalesRecord
 {
     public string BusinessUnit { get; set; } = string.Empty;
+    public string Market { get; set; } = string.Empty;
     public string Sku { get; set; } = string.Empty;
     public DateTime Month { get; set; }
     public double Quantity { get; set; }
@@ -11,6 +12,7 @@ public sealed class MonthlySalesRecord
 public sealed class ForecastSummaryRecord
 {
     public string BusinessUnit { get; init; } = string.Empty;
+    public string Market { get; init; } = string.Empty;
     public string Sku { get; init; } = string.Empty;
     public DateTime TrainStartMonth { get; init; }
     public DateTime TrainEndMonth { get; init; }
@@ -40,6 +42,7 @@ public sealed class ForecastSummaryRecord
 public sealed class ForecastDetailRecord
 {
     public string BusinessUnit { get; init; } = string.Empty;
+    public string Market { get; init; } = string.Empty;
     public string Sku { get; init; } = string.Empty;
     public DateTime Month { get; init; }
     public string DataType { get; init; } = string.Empty;
@@ -58,6 +61,7 @@ public sealed class ForecastDetailRecord
 public sealed class ForecastCandidateRecord
 {
     public string BusinessUnit { get; init; } = string.Empty;
+    public string Market { get; init; } = string.Empty;
     public string Sku { get; init; } = string.Empty;
     public int Rank { get; init; }
     public ForecastModelType ModelType { get; init; }
@@ -85,9 +89,67 @@ public sealed class ForecastProgress
     public int Total { get; init; }
     public double Percentage { get; init; }
     public string BusinessUnit { get; init; } = string.Empty;
+    public string Market { get; init; } = string.Empty;
     public string Sku { get; init; } = string.Empty;
     public bool Success { get; init; }
     public string Message { get; init; } = string.Empty;
     public TimeSpan Elapsed { get; init; }
     public TimeSpan? EstimatedRemaining { get; init; }
+}
+
+public sealed class ForecastParameterRecord
+{
+    public long Id { get; init; }
+    public string BusinessUnit { get; init; } = string.Empty;
+    public string Market { get; init; } = string.Empty;
+    public string Sku { get; init; } = string.Empty;
+    public string ParameterVersion { get; init; } = "v1";
+    public ForecastModelType ModelType { get; init; }
+    public double Alpha { get; init; }
+    public double Beta { get; init; }
+    public double Gamma { get; init; }
+    public int SeasonLength { get; init; }
+    public DateTime TrainStartMonth { get; init; }
+    public DateTime TrainEndMonth { get; init; }
+    public DateTime ValidationStartMonth { get; init; }
+    public DateTime ValidationEndMonth { get; init; }
+    public DateTime TestStartMonth { get; init; }
+    public DateTime TestEndMonth { get; init; }
+    public double ValidationSmape { get; init; }
+    public double ValidationWape { get; init; }
+    public double ValidationMae { get; init; }
+    public double ValidationScore { get; init; }
+    public DateTime GeneratedAt { get; init; } = DateTime.UtcNow;
+}
+
+public sealed class PersistedForecastResultRecord
+{
+    public string BusinessUnit { get; init; } = string.Empty;
+    public string Market { get; init; } = string.Empty;
+    public string Sku { get; init; } = string.Empty;
+    public DateTime ForecastMonth { get; init; }
+    public double ForecastQuantity { get; init; }
+    public double? ActualQuantity { get; init; }
+    public double? AbsoluteError { get; init; }
+    public double? AbsolutePercentageError { get; init; }
+    public string Status { get; init; } = string.Empty;
+    public long ParameterId { get; init; }
+    public string ParameterVersion { get; init; } = "v1";
+    public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
+}
+
+public sealed class SkuForecastRequest
+{
+    public string Market { get; init; } = string.Empty;
+    public string Sku { get; init; } = string.Empty;
+    public DateTime StartMonth { get; init; }
+    public int Horizon { get; init; }
+    public string ParameterVersion { get; init; } = "v1";
+    public bool SearchParameterIfMissing { get; init; }
+}
+
+public sealed class SkuForecastResponse
+{
+    public ForecastParameterRecord Parameter { get; init; } = new();
+    public List<PersistedForecastResultRecord> Results { get; init; } = new();
 }

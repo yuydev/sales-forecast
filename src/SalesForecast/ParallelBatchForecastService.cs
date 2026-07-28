@@ -26,14 +26,24 @@ public sealed class ParallelBatchForecastService
     public async Task<BatchForecastResult> ProcessAsync(IEnumerable<MonthlySalesRecord> source, bool useLatestHistory = true, IProgress<ForecastProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
-        var groups = source.GroupBy(x => new { BusinessUnit = x.BusinessUnit.Trim(), Sku = x.Sku.Trim() }).OrderBy(x => x.Key.BusinessUnit).ThenBy(x => x.Key.Sku).ToList();
+        var groups = source
+            .GroupBy(x => new
+            {
+                BusinessUnit = x.BusinessUnit.Trim(),
+                Market = string.IsNullOrWhiteSpace(x.Market) ? x.BusinessUnit.Trim() : x.Market.Trim(),
+                Sku = x.Sku.Trim()
+            })
+            .OrderBy(x => x.Key.Market)
+            .ThenBy(x => x.Key.BusinessUnit)
+            .ThenBy(x => x.Key.Sku)
+            .ToList();
         var results = new ConcurrentBag<GroupResult>();
         var completed = 0;
         var watch = Stopwatch.StartNew();
 
         await Parallel.ForEachAsync(groups, new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism, CancellationToken = cancellationToken }, async (group, token) =>
         {
-            var result = await Task.Run(() => ProcessGroup(group.Key.BusinessUnit, group.Key.Sku, group, useLatestHistory, token), token);
+            var result = await Task.Run(() => ProcessGroup(group.Key.BusinessUnit, group.Key.Market, group.Key.Sku, group, useLatestHistory, token), token);
             results.Add(result);
             var current = Interlocked.Increment(ref completed);
             TimeSpan? remaining = current == 0 ? null : TimeSpan.FromSeconds(watch.Elapsed.TotalSeconds * (groups.Count - current) / current);
@@ -43,6 +53,7 @@ public sealed class ParallelBatchForecastService
                 Total = groups.Count,
                 Percentage = groups.Count == 0 ? 100 : current * 100d / groups.Count,
                 BusinessUnit = result.BusinessUnit,
+                Market = result.Market,
                 Sku = result.Sku,
                 Success = result.Success,
                 Message = result.Message,
@@ -52,7 +63,7 @@ public sealed class ParallelBatchForecastService
         });
 
         var output = new BatchForecastResult();
-        foreach (var result in results.OrderBy(x => x.BusinessUnit).ThenBy(x => x.Sku))
+        foreach (var result in results.OrderBy(x => x.Market).ThenBy(x => x.BusinessUnit).ThenBy(x => x.Sku))
         {
             if (result.Summary != null)
                 output.Summaries.Add(result.Summary);
@@ -64,14 +75,14 @@ public sealed class ParallelBatchForecastService
 
     public BatchForecastResult Process(IEnumerable<MonthlySalesRecord> source, bool useLatestHistory = true, IProgress<ForecastProgress>? progress = null, CancellationToken cancellationToken = default) => ProcessAsync(source, useLatestHistory, progress, cancellationToken).GetAwaiter().GetResult();
 
-    private GroupResult ProcessGroup(string businessUnit, string sku, IEnumerable<MonthlySalesRecord> source, bool useLatestHistory, CancellationToken cancellationToken)
+    private GroupResult ProcessGroup(string businessUnit, string market, string sku, IEnumerable<MonthlySalesRecord> source, bool useLatestHistory, CancellationToken cancellationToken)
     {
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
             var data = Normalize(source);
             if (data.Count < 3)
-                return Skipped(businessUnit, sku, $"历史月份只有{data.Count}个月，少于3个月，跳过计算。");
+                return Skipped(businessUnit, market, sku, $"历史月份只有{data.Count}个月，少于3个月，跳过计算。");
 
             var selectedLength = Math.Min(data.Count, defaultTrainLength + defaultHorizon);
             var selected = (useLatestHistory ? data.OrderByDescending(x => x.Month).Take(selectedLength) : data.Take(selectedLength)).OrderBy(x => x.Month).ToList();
@@ -85,8 +96,8 @@ public sealed class ParallelBatchForecastService
             var testMetrics = HoltWintersForecaster.CalculateMetrics(test.Select(x => x.Quantity).ToArray(), forecast);
 
             var details = new List<ForecastDetailRecord>();
-            details.AddRange(train.Select(item => new ForecastDetailRecord { BusinessUnit = businessUnit, Sku = sku, Month = item.Month, DataType = "Train", ActualQuantity = item.Quantity }));
-            details.AddRange(validation.Select(item => new ForecastDetailRecord { BusinessUnit = businessUnit, Sku = sku, Month = item.Month, DataType = "Validation", ActualQuantity = item.Quantity }));
+            details.AddRange(train.Select(item => new ForecastDetailRecord { BusinessUnit = businessUnit, Market = market, Sku = sku, Month = item.Month, DataType = "Train", ActualQuantity = item.Quantity }));
+            details.AddRange(validation.Select(item => new ForecastDetailRecord { BusinessUnit = businessUnit, Market = market, Sku = sku, Month = item.Month, DataType = "Validation", ActualQuantity = item.Quantity }));
 
             double absoluteErrorTotal = 0;
             double actualTotal = 0;
@@ -101,6 +112,7 @@ public sealed class ParallelBatchForecastService
                 details.Add(new ForecastDetailRecord
                 {
                     BusinessUnit = businessUnit,
+                    Market = market,
                     Sku = sku,
                     Month = test[i].Month,
                     DataType = "Test",
@@ -119,12 +131,14 @@ public sealed class ParallelBatchForecastService
             return new GroupResult
             {
                 BusinessUnit = businessUnit,
+                Market = market,
                 Sku = sku,
                 Success = true,
                 Message = $"预测完成（训练{train.Count}个月，验证{validation.Count}个月，测试{test.Count}个月）",
                 Summary = new ForecastSummaryRecord
                 {
                     BusinessUnit = businessUnit,
+                    Market = market,
                     Sku = sku,
                     TrainStartMonth = train[0].Month,
                     TrainEndMonth = train[^1].Month,
@@ -152,6 +166,7 @@ public sealed class ParallelBatchForecastService
                 Candidates = model.Candidates.Select(candidate => new ForecastCandidateRecord
                 {
                     BusinessUnit = businessUnit,
+                    Market = market,
                     Sku = sku,
                     Rank = candidate.Rank,
                     ModelType = candidate.ModelType,
@@ -173,7 +188,7 @@ public sealed class ParallelBatchForecastService
         }
         catch (Exception ex)
         {
-            return Failed(businessUnit, sku, ex.Message);
+            return Failed(businessUnit, market, sku, ex.Message);
         }
     }
 
@@ -187,22 +202,24 @@ public sealed class ParallelBatchForecastService
         return (monthCount - validationLength, 0, validationLength);
     }
 
-    private static GroupResult Skipped(string businessUnit, string sku, string message) => new()
+    private static GroupResult Skipped(string businessUnit, string market, string sku, string message) => new()
     {
         BusinessUnit = businessUnit,
+        Market = market,
         Sku = sku,
         Success = false,
         Message = message,
-        Summary = new ForecastSummaryRecord { BusinessUnit = businessUnit, Sku = sku, Status = "Skipped", ErrorMessage = message }
+        Summary = new ForecastSummaryRecord { BusinessUnit = businessUnit, Market = market, Sku = sku, Status = "Skipped", ErrorMessage = message }
     };
 
-    private static GroupResult Failed(string businessUnit, string sku, string message) => new()
+    private static GroupResult Failed(string businessUnit, string market, string sku, string message) => new()
     {
         BusinessUnit = businessUnit,
+        Market = market,
         Sku = sku,
         Success = false,
         Message = message,
-        Summary = new ForecastSummaryRecord { BusinessUnit = businessUnit, Sku = sku, Status = "Failed", ErrorMessage = message }
+        Summary = new ForecastSummaryRecord { BusinessUnit = businessUnit, Market = market, Sku = sku, Status = "Failed", ErrorMessage = message }
     };
 
     private static List<MonthlySalesRecord> Normalize(IEnumerable<MonthlySalesRecord> source)
@@ -219,6 +236,7 @@ public sealed class ParallelBatchForecastService
     private sealed class GroupResult
     {
         public string BusinessUnit { get; init; } = string.Empty;
+        public string Market { get; init; } = string.Empty;
         public string Sku { get; init; } = string.Empty;
         public bool Success { get; init; }
         public string Message { get; init; } = string.Empty;
