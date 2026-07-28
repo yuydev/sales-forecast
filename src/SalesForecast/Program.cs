@@ -120,8 +120,9 @@ static async Task<int> RunDatabaseSkuForecastAsync(string[] args, CancellationTo
 
     var market = args[1];
     var sku = args[2];
-    if (!DateTime.TryParseExact($"{args[3]}-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var startMonth))
+    if (!DateTime.TryParseExact(args[3], "yyyy-MM", CultureInfo.InvariantCulture, DateTimeStyles.None, out var startMonthRaw))
         throw new ArgumentException($"无法解析起始预测月份：{args[3]}，请使用yyyy-MM格式。");
+    var startMonth = SalesValueNormalizer.NormalizeMonth(startMonthRaw);
     if (!int.TryParse(args[4], out var horizon) || horizon <= 0)
         throw new ArgumentException("预测月数必须是大于0的整数。");
 

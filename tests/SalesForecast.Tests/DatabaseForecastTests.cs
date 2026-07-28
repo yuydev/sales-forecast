@@ -190,9 +190,9 @@ public sealed class DatabaseForecastTests
         public Task<IReadOnlyList<MonthlySalesRecord>> GetMonthlySalesAsync(string market, string sku, CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<MonthlySalesRecord>>(
             [
-                new MonthlySalesRecord { Market = market, BusinessUnit = market, Sku = sku, Month = new DateTime(2024, 1, 1), Quantity = 10 },
-                new MonthlySalesRecord { Market = market, BusinessUnit = market, Sku = sku, Month = new DateTime(2024, 2, 1), Quantity = 11 },
-                new MonthlySalesRecord { Market = market, BusinessUnit = market, Sku = sku, Month = new DateTime(2024, 3, 1), Quantity = 12 }
+                new MonthlySalesRecord { Market = market, BusinessUnit = "BU-TEST", Sku = sku, Month = new DateTime(2024, 1, 1), Quantity = 10 },
+                new MonthlySalesRecord { Market = market, BusinessUnit = "BU-TEST", Sku = sku, Month = new DateTime(2024, 2, 1), Quantity = 11 },
+                new MonthlySalesRecord { Market = market, BusinessUnit = "BU-TEST", Sku = sku, Month = new DateTime(2024, 3, 1), Quantity = 12 }
             ]);
 
         public Task<ForecastParameterRecord?> GetLatestParameterAsync(string market, string sku, CancellationToken cancellationToken = default)

@@ -18,10 +18,14 @@ public sealed class SkuForecastService(IForecastRepository repository)
         if (request.SearchTrainLength <= 0 || request.SearchHorizon <= 0 || request.SeasonLength <= 1)
             throw new ArgumentOutOfRangeException(nameof(request), "参数搜索配置无效。");
 
-        var startMonth = NormalizeMonth(request.StartForecastMonth);
+        var startMonth = SalesValueNormalizer.NormalizeMonth(request.StartForecastMonth);
         var history = await repository.GetMonthlySalesAsync(market, sku, cancellationToken);
         if (history.Count == 0)
             throw new InvalidOperationException($"未找到市场[{market}] SKU[{sku}]的历史销售数据。");
+
+        var businessUnit = history.Select(x => x.BusinessUnit?.Trim())
+            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))
+            ?? market;
 
         var normalized = NormalizeHistory(history.Where(x => x.Month < startMonth));
         if (normalized.Count < 2)
@@ -41,12 +45,12 @@ public sealed class SkuForecastService(IForecastRepository repository)
         {
             if (!request.SearchParameterIfMissing)
                 throw new InvalidOperationException($"市场[{market}] SKU[{sku}]缺少已保存参数。请先保存参数，或将 SearchParameterIfMissing 设为 true。");
-            parameter = await SearchAndSaveParameterAsync(market, sku, normalized, request, cancellationToken);
+            parameter = await SearchAndSaveParameterAsync(market, businessUnit, sku, normalized, request, cancellationToken);
         }
 
         var valueMap = history
             .GroupBy(x => NormalizeMonth(x.Month))
-            .ToDictionary(x => x.Key, x => x.Sum(y => Math.Max(0, y.Quantity)));
+            .ToDictionary(x => x.Key, x => x.Sum(y => SalesValueNormalizer.NormalizeQuantity(y.Quantity)));
         var values = normalized.Select(x => x.Quantity).ToArray();
         var forecast = HoltWintersForecaster.Forecast(
             values,
@@ -94,6 +98,7 @@ public sealed class SkuForecastService(IForecastRepository repository)
 
     private async Task<ForecastParameterRecord> SearchAndSaveParameterAsync(
         string market,
+        string businessUnit,
         string sku,
         IReadOnlyList<MonthlySalesRecord> history,
         SkuForecastRequest request,
@@ -144,7 +149,7 @@ public sealed class SkuForecastService(IForecastRepository repository)
         var candidates = model.Candidates.Select(x => new ForecastCandidateRecord
         {
             Market = market,
-            BusinessUnit = market,
+            BusinessUnit = businessUnit,
             Sku = sku,
             Rank = x.Rank,
             ModelType = x.ModelType,
@@ -173,7 +178,7 @@ public sealed class SkuForecastService(IForecastRepository repository)
     {
         var values = history
             .GroupBy(x => NormalizeMonth(x.Month))
-            .ToDictionary(x => x.Key, x => x.Sum(y => Math.Max(0, y.Quantity)));
+            .ToDictionary(x => x.Key, x => x.Sum(y => SalesValueNormalizer.NormalizeQuantity(y.Quantity)));
         if (values.Count == 0)
             return [];
 
@@ -191,5 +196,5 @@ public sealed class SkuForecastService(IForecastRepository repository)
         return result;
     }
 
-    private static DateTime NormalizeMonth(DateTime month) => new(month.Year, month.Month, 1);
+    private static DateTime NormalizeMonth(DateTime month) => SalesValueNormalizer.NormalizeMonth(month);
 }

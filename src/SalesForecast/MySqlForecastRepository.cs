@@ -34,8 +34,8 @@ public sealed class MySqlForecastRepository(string connectionString) : IForecast
                     Market = market,
                     BusinessUnit = row.BusinessUnit.Trim(),
                     Sku = row.Sku.Trim(),
-                    SalesMonth = NormalizeMonth(row.Month),
-                    Quantity = Math.Max(0, row.Quantity)
+                    SalesMonth = SalesValueNormalizer.NormalizeMonth(row.Month),
+                    Quantity = SalesValueNormalizer.NormalizeQuantity(row.Quantity)
                 },
                 transaction,
                 cancellationToken: cancellationToken));
@@ -203,12 +203,12 @@ public sealed class MySqlForecastRepository(string connectionString) : IForecast
                 parameter.Beta,
                 parameter.Gamma,
                 parameter.SeasonLength,
-                TrainStartMonth = NormalizeMonth(parameter.TrainStartMonth),
-                TrainEndMonth = NormalizeMonth(parameter.TrainEndMonth),
-                ValidationStartMonth = NormalizeMonth(parameter.ValidationStartMonth),
-                ValidationEndMonth = NormalizeMonth(parameter.ValidationEndMonth),
-                TestStartMonth = NormalizeMonth(parameter.TestStartMonth),
-                TestEndMonth = NormalizeMonth(parameter.TestEndMonth),
+                TrainStartMonth = SalesValueNormalizer.NormalizeMonth(parameter.TrainStartMonth),
+                TrainEndMonth = SalesValueNormalizer.NormalizeMonth(parameter.TrainEndMonth),
+                ValidationStartMonth = SalesValueNormalizer.NormalizeMonth(parameter.ValidationStartMonth),
+                ValidationEndMonth = SalesValueNormalizer.NormalizeMonth(parameter.ValidationEndMonth),
+                TestStartMonth = SalesValueNormalizer.NormalizeMonth(parameter.TestStartMonth),
+                TestEndMonth = SalesValueNormalizer.NormalizeMonth(parameter.TestEndMonth),
                 parameter.ValidationSmape,
                 parameter.ValidationWape,
                 parameter.ValidationMae,
@@ -297,10 +297,10 @@ public sealed class MySqlForecastRepository(string connectionString) : IForecast
                 {
                     Market = NormalizeRequiredKey(row.Market, nameof(row.Market)),
                     Sku = NormalizeRequiredKey(row.Sku, nameof(row.Sku)),
-                    StartForecastMonth = NormalizeMonth(row.StartForecastMonth),
-                    ForecastMonth = NormalizeMonth(row.ForecastMonth),
-                    ForecastQuantity = Math.Max(0, row.ForecastQuantity),
-                    ActualQuantity = row.ActualQuantity.HasValue ? Math.Max(0, row.ActualQuantity.Value) : (double?)null,
+                    StartForecastMonth = SalesValueNormalizer.NormalizeMonth(row.StartForecastMonth),
+                    ForecastMonth = SalesValueNormalizer.NormalizeMonth(row.ForecastMonth),
+                    ForecastQuantity = SalesValueNormalizer.NormalizeQuantity(row.ForecastQuantity),
+                    ActualQuantity = row.ActualQuantity.HasValue ? SalesValueNormalizer.NormalizeQuantity(row.ActualQuantity.Value) : (double?)null,
                     row.Error,
                     row.Status,
                     ParameterSetId = row.ParameterRecordId,
@@ -326,8 +326,6 @@ public sealed class MySqlForecastRepository(string connectionString) : IForecast
             throw new InvalidOperationException($"无法连接MySQL数据库：{ex.Message}", ex);
         }
     }
-
-    private static DateTime NormalizeMonth(DateTime month) => new(month.Year, month.Month, 1);
 
     private static string NormalizeRequiredKey(string value, string paramName)
     {

@@ -17,14 +17,14 @@ public sealed class InMemoryForecastRepository : IForecastRepository
             cancellationToken.ThrowIfCancellationRequested();
             var market = MarketKeyNormalizer.NormalizeMarket(row.Market, row.BusinessUnit);
             var sku = row.Sku.Trim();
-            var month = new DateTime(row.Month.Year, row.Month.Month, 1);
+            var month = SalesValueNormalizer.NormalizeMonth(row.Month);
             var normalized = new MonthlySalesRecord
             {
                 Market = market,
                 BusinessUnit = row.BusinessUnit.Trim(),
                 Sku = sku,
                 Month = month,
-                Quantity = Math.Max(0, row.Quantity)
+                Quantity = SalesValueNormalizer.NormalizeQuantity(row.Quantity)
             };
             monthlySales[(market, sku, month)] = normalized;
         }
@@ -33,8 +33,8 @@ public sealed class InMemoryForecastRepository : IForecastRepository
 
     public Task<IReadOnlyList<MonthlySalesRecord>> GetMonthlySalesAsync(string market, string sku, CancellationToken cancellationToken = default)
     {
-        var normalizedMarket = MarketKeyNormalizer.NormalizeMarket(market, market);
-        var normalizedSku = sku.Trim();
+        var normalizedMarket = NormalizeRequiredKey(market, nameof(market));
+        var normalizedSku = NormalizeRequiredKey(sku, nameof(sku));
         IReadOnlyList<MonthlySalesRecord> rows = monthlySales.Values
             .Where(x => string.Equals(x.Market, normalizedMarket, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(x.Sku, normalizedSku, StringComparison.OrdinalIgnoreCase))
@@ -45,7 +45,7 @@ public sealed class InMemoryForecastRepository : IForecastRepository
 
     public Task<ForecastParameterRecord?> GetLatestParameterAsync(string market, string sku, CancellationToken cancellationToken = default)
     {
-        var key = (MarketKeyNormalizer.NormalizeMarket(market, market), sku.Trim());
+        var key = (NormalizeRequiredKey(market, nameof(market)), NormalizeRequiredKey(sku, nameof(sku)));
         if (!parameters.TryGetValue(key, out var list) || list.Count == 0)
             return Task.FromResult<ForecastParameterRecord?>(null);
         return Task.FromResult<ForecastParameterRecord?>(list.OrderByDescending(x => x.ParameterVersion).First());
@@ -53,8 +53,8 @@ public sealed class InMemoryForecastRepository : IForecastRepository
 
     public Task<ForecastParameterRecord> SaveParameterAsync(ForecastParameterRecord parameter, IReadOnlyCollection<ForecastCandidateRecord> candidatesToSave, CancellationToken cancellationToken = default)
     {
-        var market = MarketKeyNormalizer.NormalizeMarket(parameter.Market, parameter.Market);
-        var sku = parameter.Sku.Trim();
+        var market = NormalizeRequiredKey(parameter.Market, nameof(parameter.Market));
+        var sku = NormalizeRequiredKey(parameter.Sku, nameof(parameter.Sku));
         var key = (market, sku);
         var list = parameters.GetOrAdd(key, _ => []);
         lock (list)
@@ -71,12 +71,12 @@ public sealed class InMemoryForecastRepository : IForecastRepository
                 Beta = parameter.Beta,
                 Gamma = parameter.Gamma,
                 SeasonLength = parameter.SeasonLength,
-                TrainStartMonth = NormalizeMonth(parameter.TrainStartMonth),
-                TrainEndMonth = NormalizeMonth(parameter.TrainEndMonth),
-                ValidationStartMonth = NormalizeMonth(parameter.ValidationStartMonth),
-                ValidationEndMonth = NormalizeMonth(parameter.ValidationEndMonth),
-                TestStartMonth = NormalizeMonth(parameter.TestStartMonth),
-                TestEndMonth = NormalizeMonth(parameter.TestEndMonth),
+                TrainStartMonth = SalesValueNormalizer.NormalizeMonth(parameter.TrainStartMonth),
+                TrainEndMonth = SalesValueNormalizer.NormalizeMonth(parameter.TrainEndMonth),
+                ValidationStartMonth = SalesValueNormalizer.NormalizeMonth(parameter.ValidationStartMonth),
+                ValidationEndMonth = SalesValueNormalizer.NormalizeMonth(parameter.ValidationEndMonth),
+                TestStartMonth = SalesValueNormalizer.NormalizeMonth(parameter.TestStartMonth),
+                TestEndMonth = SalesValueNormalizer.NormalizeMonth(parameter.TestEndMonth),
                 ValidationSmape = parameter.ValidationSmape,
                 ValidationWape = parameter.ValidationWape,
                 ValidationMae = parameter.ValidationMae,
@@ -117,17 +117,17 @@ public sealed class InMemoryForecastRepository : IForecastRepository
         foreach (var row in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var market = MarketKeyNormalizer.NormalizeMarket(row.Market, row.Market);
-            var sku = row.Sku.Trim();
-            var forecastMonth = NormalizeMonth(row.ForecastMonth);
+            var market = NormalizeRequiredKey(row.Market, nameof(row.Market));
+            var sku = NormalizeRequiredKey(row.Sku, nameof(row.Sku));
+            var forecastMonth = SalesValueNormalizer.NormalizeMonth(row.ForecastMonth);
             forecasts[(market, sku, forecastMonth)] = new ForecastPredictionRecord
             {
                 Market = market,
                 Sku = sku,
-                StartForecastMonth = NormalizeMonth(row.StartForecastMonth),
+                StartForecastMonth = SalesValueNormalizer.NormalizeMonth(row.StartForecastMonth),
                 ForecastMonth = forecastMonth,
-                ForecastQuantity = Math.Max(0, row.ForecastQuantity),
-                ActualQuantity = row.ActualQuantity.HasValue ? Math.Max(0, row.ActualQuantity.Value) : null,
+                ForecastQuantity = SalesValueNormalizer.NormalizeQuantity(row.ForecastQuantity),
+                ActualQuantity = row.ActualQuantity.HasValue ? SalesValueNormalizer.NormalizeQuantity(row.ActualQuantity.Value) : null,
                 Error = row.Error,
                 Status = row.Status,
                 ParameterRecordId = row.ParameterRecordId,
@@ -150,5 +150,11 @@ public sealed class InMemoryForecastRepository : IForecastRepository
         .OrderBy(x => x.ForecastMonth)
         .ToList();
 
-    private static DateTime NormalizeMonth(DateTime month) => new(month.Year, month.Month, 1);
+    private static string NormalizeRequiredKey(string value, string paramName)
+    {
+        var normalized = value?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalized))
+            throw new ArgumentException("键值不能为空。", paramName);
+        return normalized;
+    }
 }
