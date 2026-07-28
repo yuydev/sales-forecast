@@ -1,0 +1,81 @@
+CREATE TABLE IF NOT EXISTS sales_history (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    market VARCHAR(128) NOT NULL,
+    business_unit VARCHAR(128) NOT NULL,
+    sku VARCHAR(128) NOT NULL,
+    sales_month DATE NOT NULL,
+    quantity DECIMAL(18,4) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_sales_history_market_sku_month (market, sku, sales_month),
+    KEY idx_sales_history_market_sku (market, sku),
+    CHECK (quantity >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS forecast_parameter_sets (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    market VARCHAR(128) NOT NULL,
+    sku VARCHAR(128) NOT NULL,
+    parameter_version INT NOT NULL,
+    model_type VARCHAR(64) NOT NULL,
+    alpha DOUBLE NOT NULL,
+    beta DOUBLE NOT NULL,
+    gamma DOUBLE NOT NULL,
+    season_length INT NOT NULL,
+    train_start_month DATE NOT NULL,
+    train_end_month DATE NOT NULL,
+    validation_start_month DATE NOT NULL,
+    validation_end_month DATE NOT NULL,
+    test_start_month DATE NOT NULL,
+    test_end_month DATE NOT NULL,
+    validation_smape DOUBLE NOT NULL,
+    validation_wape DOUBLE NOT NULL,
+    validation_mae DOUBLE NOT NULL,
+    composite_score DOUBLE NOT NULL,
+    generated_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_parameter_market_sku_version (market, sku, parameter_version),
+    KEY idx_parameter_market_sku (market, sku)
+);
+
+CREATE TABLE IF NOT EXISTS forecast_parameter_candidates (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    parameter_set_id BIGINT NOT NULL,
+    candidate_rank INT NOT NULL,
+    model_type VARCHAR(64) NOT NULL,
+    alpha DOUBLE NOT NULL,
+    beta DOUBLE NOT NULL,
+    gamma DOUBLE NOT NULL,
+    season_length INT NOT NULL,
+    validation_smape DOUBLE NOT NULL,
+    validation_wape DOUBLE NOT NULL,
+    validation_mae DOUBLE NOT NULL,
+    composite_score DOUBLE NOT NULL,
+    is_selected TINYINT(1) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_candidate_parameter_rank (parameter_set_id, candidate_rank),
+    CONSTRAINT fk_candidate_parameter_set FOREIGN KEY (parameter_set_id) REFERENCES forecast_parameter_sets(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS forecast_results (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    market VARCHAR(128) NOT NULL,
+    sku VARCHAR(128) NOT NULL,
+    start_forecast_month DATE NOT NULL,
+    forecast_month DATE NOT NULL,
+    forecast_quantity DECIMAL(18,4) NOT NULL,
+    actual_quantity DECIMAL(18,4) NULL,
+    error DECIMAL(18,4) NULL,
+    status VARCHAR(64) NOT NULL,
+    parameter_set_id BIGINT NOT NULL,
+    parameter_version INT NOT NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_forecast_market_sku_month (market, sku, forecast_month),
+    KEY idx_forecast_market_sku_start (market, sku, start_forecast_month),
+    CONSTRAINT fk_forecast_parameter_set FOREIGN KEY (parameter_set_id) REFERENCES forecast_parameter_sets(id),
+    CHECK (forecast_quantity >= 0),
+    CHECK (actual_quantity IS NULL OR actual_quantity >= 0)
+);

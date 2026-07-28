@@ -2,6 +2,7 @@ namespace SalesForecast;
 
 public sealed class MonthlySalesRecord
 {
+    public string Market { get; set; } = string.Empty;
     public string BusinessUnit { get; set; } = string.Empty;
     public string Sku { get; set; } = string.Empty;
     public DateTime Month { get; set; }
@@ -10,6 +11,7 @@ public sealed class MonthlySalesRecord
 
 public sealed class ForecastSummaryRecord
 {
+    public string Market { get; init; } = string.Empty;
     public string BusinessUnit { get; init; } = string.Empty;
     public string Sku { get; init; } = string.Empty;
     public DateTime TrainStartMonth { get; init; }
@@ -39,6 +41,7 @@ public sealed class ForecastSummaryRecord
 
 public sealed class ForecastDetailRecord
 {
+    public string Market { get; init; } = string.Empty;
     public string BusinessUnit { get; init; } = string.Empty;
     public string Sku { get; init; } = string.Empty;
     public DateTime Month { get; init; }
@@ -57,6 +60,7 @@ public sealed class ForecastDetailRecord
 /// <summary>每个SKU的候选模型搜索结果。</summary>
 public sealed class ForecastCandidateRecord
 {
+    public string Market { get; init; } = string.Empty;
     public string BusinessUnit { get; init; } = string.Empty;
     public string Sku { get; init; } = string.Empty;
     public int Rank { get; init; }
@@ -77,6 +81,57 @@ public sealed class BatchForecastResult
     public List<ForecastSummaryRecord> Summaries { get; } = new();
     public List<ForecastDetailRecord> Details { get; } = new();
     public List<ForecastCandidateRecord> Candidates { get; } = new();
+}
+
+public sealed class ForecastParameterRecord
+{
+    public long Id { get; init; }
+    public string Market { get; init; } = string.Empty;
+    public string Sku { get; init; } = string.Empty;
+    public int ParameterVersion { get; init; }
+    public ForecastModelType ModelType { get; init; }
+    public double Alpha { get; init; }
+    public double Beta { get; init; }
+    public double Gamma { get; init; }
+    public int SeasonLength { get; init; }
+    public DateTime TrainStartMonth { get; init; }
+    public DateTime TrainEndMonth { get; init; }
+    public DateTime ValidationStartMonth { get; init; }
+    public DateTime ValidationEndMonth { get; init; }
+    public DateTime TestStartMonth { get; init; }
+    public DateTime TestEndMonth { get; init; }
+    public double ValidationSmape { get; init; }
+    public double ValidationWape { get; init; }
+    public double ValidationMae { get; init; }
+    public double CompositeScore { get; init; }
+    public DateTime GeneratedAt { get; init; } = DateTime.UtcNow;
+}
+
+public sealed class ForecastPredictionRecord
+{
+    public string Market { get; init; } = string.Empty;
+    public string Sku { get; init; } = string.Empty;
+    public DateTime StartForecastMonth { get; init; }
+    public DateTime ForecastMonth { get; init; }
+    public double ForecastQuantity { get; init; }
+    public double? ActualQuantity { get; init; }
+    public double? Error { get; init; }
+    public string Status { get; init; } = string.Empty;
+    public long ParameterRecordId { get; init; }
+    public int ParameterVersion { get; init; }
+    public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
+}
+
+public sealed class SkuForecastRequest
+{
+    public string Market { get; init; } = string.Empty;
+    public string Sku { get; init; } = string.Empty;
+    public DateTime StartForecastMonth { get; init; }
+    public int Horizon { get; init; }
+    public bool SearchParameterIfMissing { get; init; }
+    public int SearchTrainLength { get; init; } = 30;
+    public int SearchHorizon { get; init; } = 6;
+    public int SeasonLength { get; init; } = 12;
 }
 
 public sealed class ForecastProgress
