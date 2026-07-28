@@ -67,6 +67,6 @@ public sealed class ParallelBatchForecastServiceTests
     {
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        await Assert.ThrowsAsync<OperationCanceledException>(() => new ParallelBatchForecastService().ProcessAsync(Array.Empty<MonthlySalesRecord>(), cancellationToken: cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new ParallelBatchForecastService().ProcessAsync(Array.Empty<MonthlySalesRecord>(), cancellationToken: cancellation.Token));
     }
 }

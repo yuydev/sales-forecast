@@ -1,51 +1,118 @@
 # Sales Forecast
 
-## Excel批量预测
+## 功能概览
 
-程序会读取Excel，按事业部和SKU分组，搜索最优模型及Alpha/Beta/Gamma参数，并导出预测汇总和逐月明细。
+- `.NET 8` 批量预测（Excel 输入/输出）；
+- `MySQL + Dapper + MySqlConnector` 数据持久化；
+- 历史销量按 `市场 + SKU + 月份` 幂等 upsert；
+- 保存最优参数版本和候选模型排名（每个参数版本最多保存前 100 条候选）；
+- 按 `市场 + SKU + 起始预测月份 + horizon` 执行预测并幂等保存结果。
 
-### 历史长度划分规则
+> 市场兼容说明：输入 Excel 可选 `Market/市场` 列；若缺失则默认将 `事业部` 作为市场值（向后兼容旧模板）。
 
-程序会先在每个事业部和SKU内部按月份聚合，并将首尾月份之间缺失的月份补为0，然后按补齐后的月份数划分训练集和验证集：
-
-| 补齐后月份数 | 处理方式 |
-|---:|---|
-| 0-2个月 | 跳过计算，汇总状态为`Skipped` |
-| 3-5个月 | 前面的月份训练，最后2个月验证 |
-| 6-35个月 | 按约3:1划分，验证集至少2个月 |
-| 36个月及以上 | 取最近36个月，30个月训练、6个月验证 |
-
-例如：6个月为4个月训练+2个月验证，10个月为7个月训练+3个月验证，20个月为15个月训练+5个月验证。
-
-短历史序列不启用Holt-Winters季节模型；季节模型只有在训练集至少包含两个完整季节周期，并且验证误差至少改善5%时才会采用。
-
-### 输入Excel格式
-
-默认读取第一个工作表，第一行必须是表头。支持以下中英文列名：
-
-| 业务字段 | 支持的列名 |
-|---|---|
-| 事业部 | `BusinessUnit`、`Business Unit`、`事业部`、`事业部编码` |
-| SKU | `Sku`、`SKU`、`物料编码`、`商品编码` |
-| 月份 | `Month`、`月份`、`日期`、`年月` |
-| 销量 | `Quantity`、`Qty`、`销量`、`销售数量`、`实际值`、`数量` |
-
-### 运行方式
+## 1. Excel 批量预测（保持兼容）
 
 ```bash
-dotnet run --project src/SalesForecast -- input.xlsx output.xlsx
+dotnet run --project /home/runner/work/sales-forecast/sales-forecast/src/SalesForecast -- <输入Excel> <输出Excel> [并发数] [训练月数] [预测月数] [季节周期]
 ```
 
-完整参数顺序：
+输入支持列名：
+
+- 市场（可选）：`Market`、`市场`、`市场编码`
+- 事业部：`BusinessUnit`、`Business Unit`、`事业部`、`事业部编码`
+- SKU：`Sku`、`SKU`、`物料编码`、`商品编码`
+- 月份：`Month`、`月份`、`日期`、`年月`
+- 销量：`Quantity`、`Qty`、`销量`、`销售数量`、`实际值`、`数量`
+
+输出工作表：
+
+- `预测汇总`
+- `预测明细`
+- `参数搜索_N`（按行数自动拆分，且每个市场+SKU仅导出前100名候选）
+- `说明`
+
+## 2. 数据库初始化（MySQL）
+
+执行 schema：
+
+```sql
+SOURCE /home/runner/work/sales-forecast/sales-forecast/src/SalesForecast/database/mysql-schema.sql;
+```
+
+或复制文件内容在数据库执行。
+
+## 3. 连接配置
+
+优先使用环境变量：
 
 ```bash
-dotnet run --project src/SalesForecast -- <输入Excel> <输出Excel> [并发数] [训练月数] [预测月数] [季节周期]
+export SALES_FORECAST_DB_CONNECTION_STRING="Server=127.0.0.1;Port=3306;Database=sales_forecast;User ID=sales_forecast_user;******;SslMode=Preferred"
 ```
 
-例如：
+也可在命令参数末尾直接传完整连接串。
+
+示例模板见：
+
+- `/home/runner/work/sales-forecast/sales-forecast/.env.example`
+
+> 不要提交真实密码。
+
+## 4. 历史数据导入（幂等）
 
 ```bash
-dotnet run --project src/SalesForecast -- sales.xlsx forecast-result.xlsx 6 30 6 12
+dotnet run --project /home/runner/work/sales-forecast/sales-forecast/src/SalesForecast -- db-import <输入Excel路径> [连接字符串]
 ```
 
-按`Ctrl+C`可以取消正在运行的预测。输出Excel包含`预测汇总`、`预测明细`和`说明`三个工作表。
+规则：
+
+- 按 `market + sku + month` 唯一；
+- month 统一归一化为当月第一天；
+- quantity 自动钳制为非负；
+- 重复执行同键会更新为最新值（幂等 upsert）。
+
+## 5. 按市场+SKU+起始月份预测并落库
+
+```bash
+dotnet run --project /home/runner/work/sales-forecast/sales-forecast/src/SalesForecast -- db-forecast-sku <市场> <SKU> <起始月份yyyy-MM> <预测月数> [--search-parameter-if-missing] [连接字符串]
+```
+
+行为：
+
+1. 读取数据库历史销量（市场+SKU）；
+2. 优先读取已保存参数（最新版本）；
+3. 若无参数：
+   - 默认报错（清晰提示）；
+   - 加 `--search-parameter-if-missing` 时执行参数搜索并保存参数版本 + 候选排名；
+4. 按起始预测月份生成 horizon 个月预测并写入 `forecast_results`；
+5. 预测结果按 `market + sku + forecast_month` 幂等更新。
+
+参数表保存字段包含：
+
+- 市场、SKU、参数版本、模型类型；
+- Alpha/Beta/Gamma、季节周期；
+- 训练/验证/测试区间；
+- 验证指标（sMAPE/WAPE/MAE）；
+- 综合评分、生成时间。
+
+## 6. 分层说明
+
+- `HoltWintersForecaster`：纯算法，不依赖数据库；
+- `IForecastRepository`：仓储抽象；
+- `MySqlForecastRepository`：Dapper + MySqlConnector 实现（参数化 SQL + 连接释放）；
+- `SkuForecastService` / `SalesHistoryImportService`：业务编排层。
+
+## 7. 测试
+
+本仓库当前提供单元测试（包含：
+- 历史 upsert 幂等；
+- 参数保存与候选 top100；
+- 市场/SKU/起始月份选择；
+- 缺少参数与数据库不可用错误提示）。
+
+运行：
+
+```bash
+dotnet test /home/runner/work/sales-forecast/sales-forecast/tests/SalesForecast.Tests/SalesForecast.Tests.csproj
+```
+
+> 当前未包含真实 MySQL 集成测试；如需集成验证，请在可用 MySQL 环境中执行 schema 后运行 `db-import` 与 `db-forecast-sku` 命令。

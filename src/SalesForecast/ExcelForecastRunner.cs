@@ -8,6 +8,7 @@ public static class ExcelForecastRunner
     private const int MaxRowsPerCandidateSheet = 900_000;
     private const int MaxCandidatesPerSku = 100;
 
+    private static readonly string[] MarketHeaders = ["Market", "市场", "市场编码"];
     private static readonly string[] BusinessUnitHeaders = ["BusinessUnit", "Business Unit", "事业部", "事业部编码"];
     private static readonly string[] SkuHeaders = ["Sku", "SKU", "sku", "物料编码", "商品编码"];
     private static readonly string[] MonthHeaders = ["Month", "月份", "日期", "年月"];
@@ -51,6 +52,7 @@ public static class ExcelForecastRunner
         }
 
         var businessUnitColumn = FindColumn(headerMap, BusinessUnitHeaders);
+        var marketColumn = FindOptionalColumn(headerMap, MarketHeaders);
         var skuColumn = FindColumn(headerMap, SkuHeaders);
         var monthColumn = FindColumn(headerMap, MonthHeaders);
         var quantityColumn = FindColumn(headerMap, QuantityHeaders);
@@ -66,8 +68,13 @@ public static class ExcelForecastRunner
             if (string.IsNullOrWhiteSpace(businessUnit) || string.IsNullOrWhiteSpace(sku))
                 continue;
 
+            var market = marketColumn.HasValue
+                ? row.Cell(marketColumn.Value).GetString().Trim()
+                : string.Empty;
+
             rows.Add(new MonthlySalesRecord
             {
+                Market = ParallelBatchForecastService.NormalizeMarket(market, businessUnit),
                 BusinessUnit = businessUnit,
                 Sku = sku,
                 Month = ReadMonth(row.Cell(monthColumn)),
@@ -104,7 +111,7 @@ public static class ExcelForecastRunner
     {
         var headers = new[]
         {
-            "事业部", "SKU", "排名", "模型类型", "Alpha", "Beta", "Gamma",
+            "市场", "事业部", "SKU", "排名", "模型类型", "Alpha", "Beta", "Gamma",
             "季节周期", "验证集sMAPE", "验证集WAPE", "验证集MAE", "综合评分", "是否选中"
         };
 
@@ -133,19 +140,20 @@ public static class ExcelForecastRunner
                 row = 2;
             }
 
-            sheet.Cell(row, 1).Value = item.BusinessUnit;
-            sheet.Cell(row, 2).Value = item.Sku;
-            sheet.Cell(row, 3).Value = item.Rank;
-            sheet.Cell(row, 4).Value = item.ModelType.ToString();
-            sheet.Cell(row, 5).Value = item.Alpha;
-            sheet.Cell(row, 6).Value = item.Beta;
-            sheet.Cell(row, 7).Value = item.Gamma;
-            sheet.Cell(row, 8).Value = item.SeasonLength;
-            sheet.Cell(row, 9).Value = item.ValidationSmape;
-            sheet.Cell(row, 10).Value = item.ValidationWape;
-            sheet.Cell(row, 11).Value = item.ValidationMae;
-            sheet.Cell(row, 12).Value = item.Score;
-            sheet.Cell(row, 13).Value = item.IsSelected ? "是" : "否";
+            sheet.Cell(row, 1).Value = item.Market;
+            sheet.Cell(row, 2).Value = item.BusinessUnit;
+            sheet.Cell(row, 3).Value = item.Sku;
+            sheet.Cell(row, 4).Value = item.Rank;
+            sheet.Cell(row, 5).Value = item.ModelType.ToString();
+            sheet.Cell(row, 6).Value = item.Alpha;
+            sheet.Cell(row, 7).Value = item.Beta;
+            sheet.Cell(row, 8).Value = item.Gamma;
+            sheet.Cell(row, 9).Value = item.SeasonLength;
+            sheet.Cell(row, 10).Value = item.ValidationSmape;
+            sheet.Cell(row, 11).Value = item.ValidationWape;
+            sheet.Cell(row, 12).Value = item.ValidationMae;
+            sheet.Cell(row, 13).Value = item.Score;
+            sheet.Cell(row, 14).Value = item.IsSelected ? "是" : "否";
             row++;
         }
 
@@ -154,9 +162,9 @@ public static class ExcelForecastRunner
             var candidateSheet = workbook.Worksheet($"参数搜索_{i}");
             var lastRow = candidateSheet.LastRowUsed()?.RowNumber() ?? 1;
             FormatTable(candidateSheet, lastRow, headers.Length);
-            candidateSheet.Columns(5, 7).Style.NumberFormat.Format = "0.00";
-            candidateSheet.Columns(9, 10).Style.NumberFormat.Format = "0.00%";
-            candidateSheet.Column(12).Style.NumberFormat.Format = "0.000000";
+            candidateSheet.Columns(6, 8).Style.NumberFormat.Format = "0.00";
+            candidateSheet.Columns(10, 11).Style.NumberFormat.Format = "0.00%";
+            candidateSheet.Column(13).Style.NumberFormat.Format = "0.000000";
         }
     }
 
@@ -170,13 +178,14 @@ public static class ExcelForecastRunner
             "验证集MAE", "测试集sMAPE", "测试集WAPE", "测试集MAE", "是否采用季节模型",
             "季节模型改善比例", "训练销量", "测试实际销量", "测试预测销量", "状态", "错误信息", "创建时间"
         };
+        headers = ["市场", .. headers];
         WriteHeaders(sheet, headers);
         var row = 2;
         foreach (var item in summaries)
         {
             var values = new object?[]
             {
-                item.BusinessUnit, item.Sku, item.TrainStartMonth, item.TrainEndMonth,
+                item.Market, item.BusinessUnit, item.Sku, item.TrainStartMonth, item.TrainEndMonth,
                 item.TestStartMonth, item.TestEndMonth, item.ModelType.ToString(), item.Alpha,
                 item.Beta, item.Gamma, item.SeasonLength, item.ValidationSmape,
                 item.ValidationWape, item.ValidationMae, item.TestSmape, item.TestWape,
@@ -191,12 +200,12 @@ public static class ExcelForecastRunner
         }
 
         FormatTable(sheet, row - 1, headers.Length);
-        sheet.Columns(3, 6).Style.DateFormat.Format = "yyyy-mm";
-        sheet.Column(25).Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
-        sheet.Columns(8, 10).Style.NumberFormat.Format = "0.00";
-        sheet.Columns(12, 14).Style.NumberFormat.Format = "0.00%";
-        sheet.Columns(15, 16).Style.NumberFormat.Format = "0.00%";
-        sheet.Column(19).Style.NumberFormat.Format = "0.00%";
+        sheet.Columns(4, 7).Style.DateFormat.Format = "yyyy-mm";
+        sheet.Column(26).Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
+        sheet.Columns(9, 11).Style.NumberFormat.Format = "0.00";
+        sheet.Columns(13, 15).Style.NumberFormat.Format = "0.00%";
+        sheet.Columns(16, 17).Style.NumberFormat.Format = "0.00%";
+        sheet.Column(20).Style.NumberFormat.Format = "0.00%";
     }
 
     private static void AddDetailSheet(XLWorkbook workbook, IReadOnlyCollection<ForecastDetailRecord> details)
@@ -207,31 +216,33 @@ public static class ExcelForecastRunner
             "事业部", "SKU", "月份", "数据类型", "测试月份序号", "实际值", "预测值",
             "误差", "绝对误差", "绝对百分比误差", "单月WAPE", "累计WAPE", "累计MAE"
         };
+        headers = ["市场", .. headers];
         WriteHeaders(sheet, headers);
         var row = 2;
         foreach (var item in details)
         {
-            sheet.Cell(row, 1).Value = item.BusinessUnit;
-            sheet.Cell(row, 2).Value = item.Sku;
-            sheet.Cell(row, 3).Value = item.Month;
-            sheet.Cell(row, 4).Value = item.DataType;
-            sheet.Cell(row, 5).Value = item.MonthIndex;
-            sheet.Cell(row, 6).Value = item.ActualQuantity;
-            sheet.Cell(row, 7).Value = item.ForecastQuantity;
-            sheet.Cell(row, 8).Value = item.Error;
-            sheet.Cell(row, 9).Value = item.AbsoluteError;
-            WriteNullable(sheet.Cell(row, 10), item.AbsolutePercentageError);
-            WriteNullable(sheet.Cell(row, 11), item.Wape);
-            WriteNullable(sheet.Cell(row, 12), item.CumulativeWape);
-            sheet.Cell(row, 13).Value = item.CumulativeMae;
+            sheet.Cell(row, 1).Value = item.Market;
+            sheet.Cell(row, 2).Value = item.BusinessUnit;
+            sheet.Cell(row, 3).Value = item.Sku;
+            sheet.Cell(row, 4).Value = item.Month;
+            sheet.Cell(row, 5).Value = item.DataType;
+            sheet.Cell(row, 6).Value = item.MonthIndex;
+            sheet.Cell(row, 7).Value = item.ActualQuantity;
+            sheet.Cell(row, 8).Value = item.ForecastQuantity;
+            sheet.Cell(row, 9).Value = item.Error;
+            sheet.Cell(row, 10).Value = item.AbsoluteError;
+            WriteNullable(sheet.Cell(row, 11), item.AbsolutePercentageError);
+            WriteNullable(sheet.Cell(row, 12), item.Wape);
+            WriteNullable(sheet.Cell(row, 13), item.CumulativeWape);
+            sheet.Cell(row, 14).Value = item.CumulativeMae;
             row++;
         }
 
         FormatTable(sheet, row - 1, headers.Length);
-        sheet.Column(3).Style.DateFormat.Format = "yyyy-mm";
-        sheet.Columns(10, 12).Style.NumberFormat.Format = "0.00%";
-        sheet.Columns(6, 9).Style.NumberFormat.Format = "0.####";
-        sheet.Column(13).Style.NumberFormat.Format = "0.####";
+        sheet.Column(4).Style.DateFormat.Format = "yyyy-mm";
+        sheet.Columns(11, 13).Style.NumberFormat.Format = "0.00%";
+        sheet.Columns(7, 10).Style.NumberFormat.Format = "0.####";
+        sheet.Column(14).Style.NumberFormat.Format = "0.####";
     }
 
     private static void AddReadmeSheet(XLWorkbook workbook)
@@ -239,9 +250,10 @@ public static class ExcelForecastRunner
         var sheet = workbook.Worksheets.Add("说明");
         sheet.Cell(1, 1).Value = "说明";
         sheet.Cell(2, 1).Value = "输入表第一行必须包含：事业部、SKU、月份、销量；支持中英文表头。";
-        sheet.Cell(3, 1).Value = "缺失月份会在同一事业部和SKU的首尾月份之间补为0。";
-        sheet.Cell(4, 1).Value = "参数搜索结果按事业部、SKU和排名排序，每个SKU只导出综合评分前100名候选模型。";
-        sheet.Cell(5, 1).Value = "参数搜索结果自动拆分到多个工作表，每个工作表最多写入900000行数据。";
+        sheet.Cell(3, 1).Value = "可选“市场/Market”列；若缺失，默认使用“事业部”作为市场。";
+        sheet.Cell(4, 1).Value = "缺失月份会在同一市场、事业部和SKU的首尾月份之间补为0。";
+        sheet.Cell(5, 1).Value = "参数搜索结果按事业部、SKU和排名排序，每个SKU只导出综合评分前100名候选模型。";
+        sheet.Cell(6, 1).Value = "参数搜索结果自动拆分到多个工作表，每个工作表最多写入900000行数据。";
         sheet.Columns().AdjustToContents();
     }
 
@@ -282,6 +294,17 @@ public static class ExcelForecastRunner
                 return column;
         }
         throw new InvalidDataException($"Excel缺少必要列：{string.Join("、", aliases)}。");
+    }
+
+    private static int? FindOptionalColumn(IReadOnlyDictionary<string, int> headerMap, IEnumerable<string> aliases)
+    {
+        foreach (var alias in aliases)
+        {
+            var normalized = NormalizeHeader(alias);
+            if (headerMap.TryGetValue(normalized, out var column))
+                return column;
+        }
+        return null;
     }
 
     private static string NormalizeHeader(string value) => value.Trim().Replace(" ", string.Empty).Replace("_", string.Empty).Replace("-", string.Empty).ToLowerInvariant();
