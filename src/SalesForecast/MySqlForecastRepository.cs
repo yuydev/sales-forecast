@@ -62,8 +62,8 @@ public sealed class MySqlForecastRepository(string connectionString) : IForecast
             sql,
             new
             {
-                Market = ParallelBatchForecastService.NormalizeMarket(market, market),
-                Sku = sku.Trim()
+                Market = NormalizeRequiredKey(market, nameof(market)),
+                Sku = NormalizeRequiredKey(sku, nameof(sku))
             },
             cancellationToken: cancellationToken));
         return rows.ToList();
@@ -100,12 +100,12 @@ public sealed class MySqlForecastRepository(string connectionString) : IForecast
             """;
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
-        var row = await connection.QuerySingleOrDefaultAsync(new CommandDefinition(
+        var row = await connection.QuerySingleOrDefaultAsync<ParameterSetRow>(new CommandDefinition(
             sql,
             new
             {
-                Market = ParallelBatchForecastService.NormalizeMarket(market, market),
-                Sku = sku.Trim()
+                Market = NormalizeRequiredKey(market, nameof(market)),
+                Sku = NormalizeRequiredKey(sku, nameof(sku))
             },
             cancellationToken: cancellationToken));
 
@@ -118,7 +118,7 @@ public sealed class MySqlForecastRepository(string connectionString) : IForecast
             Market = row.Market,
             Sku = row.Sku,
             ParameterVersion = row.ParameterVersion,
-            ModelType = Enum.Parse<ForecastModelType>((string)row.ModelType),
+            ModelType = Enum.Parse<ForecastModelType>(row.ModelType),
             Alpha = row.Alpha,
             Beta = row.Beta,
             Gamma = row.Gamma,
@@ -179,8 +179,8 @@ public sealed class MySqlForecastRepository(string connectionString) : IForecast
                 updated_at = UTC_TIMESTAMP();
             """;
 
-        var market = ParallelBatchForecastService.NormalizeMarket(parameter.Market, parameter.Market);
-        var sku = parameter.Sku.Trim();
+        var market = NormalizeRequiredKey(parameter.Market, nameof(parameter.Market));
+        var sku = NormalizeRequiredKey(parameter.Sku, nameof(parameter.Sku));
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
@@ -294,8 +294,8 @@ public sealed class MySqlForecastRepository(string connectionString) : IForecast
                 sql,
                 new
                 {
-                    Market = ParallelBatchForecastService.NormalizeMarket(row.Market, row.Market),
-                    Sku = row.Sku.Trim(),
+                    Market = NormalizeRequiredKey(row.Market, nameof(row.Market)),
+                    Sku = NormalizeRequiredKey(row.Sku, nameof(row.Sku)),
                     StartForecastMonth = NormalizeMonth(row.StartForecastMonth),
                     ForecastMonth = NormalizeMonth(row.ForecastMonth),
                     ForecastQuantity = Math.Max(0, row.ForecastQuantity),
@@ -327,4 +327,36 @@ public sealed class MySqlForecastRepository(string connectionString) : IForecast
     }
 
     private static DateTime NormalizeMonth(DateTime month) => new(month.Year, month.Month, 1);
+
+    private static string NormalizeRequiredKey(string value, string paramName)
+    {
+        var normalized = value?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalized))
+            throw new ArgumentException("键值不能为空。", paramName);
+        return normalized;
+    }
+
+    private sealed class ParameterSetRow
+    {
+        public long Id { get; init; }
+        public string Market { get; init; } = string.Empty;
+        public string Sku { get; init; } = string.Empty;
+        public int ParameterVersion { get; init; }
+        public string ModelType { get; init; } = string.Empty;
+        public double Alpha { get; init; }
+        public double Beta { get; init; }
+        public double Gamma { get; init; }
+        public int SeasonLength { get; init; }
+        public DateTime TrainStartMonth { get; init; }
+        public DateTime TrainEndMonth { get; init; }
+        public DateTime ValidationStartMonth { get; init; }
+        public DateTime ValidationEndMonth { get; init; }
+        public DateTime TestStartMonth { get; init; }
+        public DateTime TestEndMonth { get; init; }
+        public double ValidationSmape { get; init; }
+        public double ValidationWape { get; init; }
+        public double ValidationMae { get; init; }
+        public double CompositeScore { get; init; }
+        public DateTime GeneratedAt { get; init; }
+    }
 }

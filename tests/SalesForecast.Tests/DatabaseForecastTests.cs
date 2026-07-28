@@ -181,7 +181,8 @@ public sealed class DatabaseForecastTests
             SearchParameterIfMissing = false
         }));
 
-        Assert.Contains("读取参数失败", ex.Message);
+        Assert.NotNull(ex.InnerException);
+        Assert.Contains("database down", ex.InnerException!.Message);
     }
 
     private sealed class ThrowingRepository : IForecastRepository

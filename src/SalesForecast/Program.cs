@@ -1,3 +1,4 @@
+using System.Globalization;
 using SalesForecast;
 
 if (args.Length == 0)
@@ -113,7 +114,7 @@ static async Task<int> RunDatabaseSkuForecastAsync(string[] args, CancellationTo
 
     var market = args[1];
     var sku = args[2];
-    if (!DateTime.TryParse($"{args[3]}-01", out var startMonth))
+    if (!DateTime.TryParseExact($"{args[3]}-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var startMonth))
         throw new ArgumentException($"无法解析起始预测月份：{args[3]}，请使用yyyy-MM格式。");
     if (!int.TryParse(args[4], out var horizon) || horizon <= 0)
         throw new ArgumentException("预测月数必须是大于0的整数。");
