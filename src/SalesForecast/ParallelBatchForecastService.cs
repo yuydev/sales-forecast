@@ -1,0 +1,229 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+
+namespace SalesForecast;
+
+public sealed class ParallelBatchForecastService
+{
+    private readonly int defaultTrainLength;
+    private readonly int defaultHorizon;
+    private readonly int seasonLength;
+    private readonly int maxDegreeOfParallelism;
+
+    public ParallelBatchForecastService(int trainLength = 30, int horizon = 6, int seasonLength = 12, int? maxDegreeOfParallelism = null)
+    {
+        if (trainLength <= 0 || horizon <= 0 || seasonLength <= 1)
+            throw new ArgumentOutOfRangeException();
+        defaultTrainLength = trainLength;
+        defaultHorizon = horizon;
+        this.seasonLength = seasonLength;
+        maxDegreeOfParallelism = maxDegreeOfParallelism ?? Math.Max(1, Environment.ProcessorCount - 1);
+        if (maxDegreeOfParallelism <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxDegreeOfParallelism));
+        this.maxDegreeOfParallelism = maxDegreeOfParallelism.Value;
+    }
+
+    public async Task<BatchForecastResult> ProcessAsync(IEnumerable<MonthlySalesRecord> source, bool useLatestHistory = true, IProgress<ForecastProgress>? progress = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var groups = source.GroupBy(x => new { BusinessUnit = x.BusinessUnit.Trim(), Sku = x.Sku.Trim() }).OrderBy(x => x.Key.BusinessUnit).ThenBy(x => x.Key.Sku).ToList();
+        var results = new ConcurrentBag<GroupResult>();
+        var completed = 0;
+        var watch = Stopwatch.StartNew();
+
+        await Parallel.ForEachAsync(groups, new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism, CancellationToken = cancellationToken }, async (group, token) =>
+        {
+            var result = await Task.Run(() => ProcessGroup(group.Key.BusinessUnit, group.Key.Sku, group, useLatestHistory, token), token);
+            results.Add(result);
+            var current = Interlocked.Increment(ref completed);
+            TimeSpan? remaining = current == 0 ? null : TimeSpan.FromSeconds(watch.Elapsed.TotalSeconds * (groups.Count - current) / current);
+            progress?.Report(new ForecastProgress
+            {
+                Completed = current,
+                Total = groups.Count,
+                Percentage = groups.Count == 0 ? 100 : current * 100d / groups.Count,
+                BusinessUnit = result.BusinessUnit,
+                Sku = result.Sku,
+                Success = result.Success,
+                Message = result.Message,
+                Elapsed = watch.Elapsed,
+                EstimatedRemaining = remaining
+            });
+        });
+
+        var output = new BatchForecastResult();
+        foreach (var result in results.OrderBy(x => x.BusinessUnit).ThenBy(x => x.Sku))
+        {
+            if (result.Summary != null)
+                output.Summaries.Add(result.Summary);
+            output.Details.AddRange(result.Details.OrderBy(x => x.Month));
+            output.Candidates.AddRange(result.Candidates.OrderBy(x => x.Rank));
+        }
+        return output;
+    }
+
+    public BatchForecastResult Process(IEnumerable<MonthlySalesRecord> source, bool useLatestHistory = true, IProgress<ForecastProgress>? progress = null, CancellationToken cancellationToken = default) => ProcessAsync(source, useLatestHistory, progress, cancellationToken).GetAwaiter().GetResult();
+
+    private GroupResult ProcessGroup(string businessUnit, string sku, IEnumerable<MonthlySalesRecord> source, bool useLatestHistory, CancellationToken cancellationToken)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var data = Normalize(source);
+            if (data.Count < 3)
+                return Skipped(businessUnit, sku, $"历史月份只有{data.Count}个月，少于3个月，跳过计算。");
+
+            var selectedLength = Math.Min(data.Count, defaultTrainLength + defaultHorizon);
+            var selected = (useLatestHistory ? data.OrderByDescending(x => x.Month).Take(selectedLength) : data.Take(selectedLength)).OrderBy(x => x.Month).ToList();
+            var split = GetSplit(selected.Count);
+            var train = selected.Take(split.TrainLength).ToList();
+            var validation = split.ValidationLength > 0 ? selected.Skip(split.TrainLength).Take(split.ValidationLength).ToList() : new List<MonthlySalesRecord>();
+            var test = split.TestLength > 0 ? selected.Skip(split.TrainLength + split.ValidationLength).Take(split.TestLength).ToList() : validation;
+            var values = selected.Select(x => x.Quantity).ToArray();
+            var model = HoltWintersForecaster.SearchBest(values, split.TrainLength, split.ValidationLength > 0 ? split.ValidationLength : split.TestLength, seasonLength, split.TestLength > 0);
+            var forecast = model.Forecast;
+            var testMetrics = HoltWintersForecaster.CalculateMetrics(test.Select(x => x.Quantity).ToArray(), forecast);
+
+            var details = new List<ForecastDetailRecord>();
+            details.AddRange(train.Select(item => new ForecastDetailRecord { BusinessUnit = businessUnit, Sku = sku, Month = item.Month, DataType = "Train", ActualQuantity = item.Quantity }));
+            details.AddRange(validation.Select(item => new ForecastDetailRecord { BusinessUnit = businessUnit, Sku = sku, Month = item.Month, DataType = "Validation", ActualQuantity = item.Quantity }));
+
+            double absoluteErrorTotal = 0;
+            double actualTotal = 0;
+            for (var i = 0; i < test.Count; i++)
+            {
+                var actual = test[i].Quantity;
+                var predicted = Math.Max(0, forecast[i]);
+                var error = predicted - actual;
+                var absoluteError = Math.Abs(error);
+                absoluteErrorTotal += absoluteError;
+                actualTotal += actual;
+                details.Add(new ForecastDetailRecord
+                {
+                    BusinessUnit = businessUnit,
+                    Sku = sku,
+                    Month = test[i].Month,
+                    DataType = "Test",
+                    MonthIndex = i + 1,
+                    ActualQuantity = actual,
+                    ForecastQuantity = predicted,
+                    Error = error,
+                    AbsoluteError = absoluteError,
+                    AbsolutePercentageError = actual > 0 ? absoluteError / actual : null,
+                    Wape = actualTotal > 0 ? absoluteErrorTotal / actualTotal : null,
+                    CumulativeWape = actualTotal > 0 ? absoluteErrorTotal / actualTotal : null,
+                    CumulativeMae = absoluteErrorTotal / (i + 1)
+                });
+            }
+
+            return new GroupResult
+            {
+                BusinessUnit = businessUnit,
+                Sku = sku,
+                Success = true,
+                Message = $"预测完成（训练{train.Count}个月，验证{validation.Count}个月，测试{test.Count}个月）",
+                Summary = new ForecastSummaryRecord
+                {
+                    BusinessUnit = businessUnit,
+                    Sku = sku,
+                    TrainStartMonth = train[0].Month,
+                    TrainEndMonth = train[^1].Month,
+                    TestStartMonth = test[0].Month,
+                    TestEndMonth = test[^1].Month,
+                    ModelType = model.ModelType,
+                    Alpha = model.Alpha,
+                    Beta = model.Beta,
+                    Gamma = model.Gamma,
+                    SeasonLength = model.SeasonLength,
+                    ValidationSmape = model.ValidationMetrics.Smape,
+                    ValidationWape = model.ValidationMetrics.Wape,
+                    ValidationMae = model.ValidationMetrics.Mae,
+                    TestSmape = testMetrics.Smape,
+                    TestWape = testMetrics.Wape,
+                    TestMae = testMetrics.Mae,
+                    SeasonalModelAccepted = model.SeasonalModelAccepted,
+                    SeasonalImprovement = model.SeasonalImprovement,
+                    TrainQuantity = train.Sum(x => x.Quantity),
+                    TestActualQuantity = test.Sum(x => x.Quantity),
+                    TestForecastQuantity = forecast.Sum(),
+                    Status = "Success"
+                },
+                Details = details,
+                Candidates = model.Candidates.Select(candidate => new ForecastCandidateRecord
+                {
+                    BusinessUnit = businessUnit,
+                    Sku = sku,
+                    Rank = candidate.Rank,
+                    ModelType = candidate.ModelType,
+                    Alpha = candidate.Alpha,
+                    Beta = candidate.Beta,
+                    Gamma = candidate.Gamma,
+                    SeasonLength = candidate.SeasonLength,
+                    ValidationSmape = candidate.ValidationSmape,
+                    ValidationWape = candidate.ValidationWape,
+                    ValidationMae = candidate.ValidationMae,
+                    Score = candidate.Score,
+                    IsSelected = candidate.IsSelected
+                }).ToList()
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return Failed(businessUnit, sku, ex.Message);
+        }
+    }
+
+    private (int TrainLength, int ValidationLength, int TestLength) GetSplit(int monthCount)
+    {
+        if (monthCount >= defaultTrainLength + defaultHorizon)
+            return (defaultTrainLength - defaultHorizon, defaultHorizon, defaultHorizon);
+        if (monthCount < 6)
+            return (monthCount - 2, 0, 2);
+        var validationLength = Math.Max(2, (int)Math.Round(monthCount / 4d, MidpointRounding.AwayFromZero));
+        return (monthCount - validationLength, 0, validationLength);
+    }
+
+    private static GroupResult Skipped(string businessUnit, string sku, string message) => new()
+    {
+        BusinessUnit = businessUnit,
+        Sku = sku,
+        Success = false,
+        Message = message,
+        Summary = new ForecastSummaryRecord { BusinessUnit = businessUnit, Sku = sku, Status = "Skipped", ErrorMessage = message }
+    };
+
+    private static GroupResult Failed(string businessUnit, string sku, string message) => new()
+    {
+        BusinessUnit = businessUnit,
+        Sku = sku,
+        Success = false,
+        Message = message,
+        Summary = new ForecastSummaryRecord { BusinessUnit = businessUnit, Sku = sku, Status = "Failed", ErrorMessage = message }
+    };
+
+    private static List<MonthlySalesRecord> Normalize(IEnumerable<MonthlySalesRecord> source)
+    {
+        var values = source.GroupBy(x => new DateTime(x.Month.Year, x.Month.Month, 1)).ToDictionary(x => x.Key, x => x.Sum(y => Math.Max(0, y.Quantity)));
+        if (values.Count == 0)
+            return new();
+        var result = new List<MonthlySalesRecord>();
+        for (var month = values.Keys.Min(); month <= values.Keys.Max(); month = month.AddMonths(1))
+            result.Add(new MonthlySalesRecord { Month = month, Quantity = values.GetValueOrDefault(month) });
+        return result;
+    }
+
+    private sealed class GroupResult
+    {
+        public string BusinessUnit { get; init; } = string.Empty;
+        public string Sku { get; init; } = string.Empty;
+        public bool Success { get; init; }
+        public string Message { get; init; } = string.Empty;
+        public ForecastSummaryRecord? Summary { get; init; }
+        public List<ForecastDetailRecord> Details { get; init; } = new();
+        public List<ForecastCandidateRecord> Candidates { get; init; } = new();
+    }
+}
