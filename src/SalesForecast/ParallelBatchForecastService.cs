@@ -134,6 +134,7 @@ public sealed class ParallelBatchForecastService
                     Alpha = model.Alpha,
                     Beta = model.Beta,
                     Gamma = model.Gamma,
+                    Phi = model.Phi,
                     SeasonLength = model.SeasonLength,
                     ValidationSmape = model.ValidationMetrics.Smape,
                     ValidationWape = model.ValidationMetrics.Wape,
@@ -146,6 +147,12 @@ public sealed class ParallelBatchForecastService
                     TrainQuantity = train.Sum(x => x.Quantity),
                     TestActualQuantity = test.Sum(x => x.Quantity),
                     TestForecastQuantity = forecast.Sum(),
+                    StabilityPenalty = model.StabilityPenalty,
+                    RawForecastMax = model.RawForecastMax,
+                    ClampedForecastMax = model.ClampedForecastMax,
+                    WasClamped = model.WasClamped,
+                    ClampedPointCount = model.ClampedPointCount,
+                    ClampUpperBound = model.ClampUpperBound,
                     Status = "Success"
                 },
                 Details = details,
@@ -158,11 +165,13 @@ public sealed class ParallelBatchForecastService
                     Alpha = candidate.Alpha,
                     Beta = candidate.Beta,
                     Gamma = candidate.Gamma,
+                    Phi = candidate.Phi,
                     SeasonLength = candidate.SeasonLength,
                     ValidationSmape = candidate.ValidationSmape,
                     ValidationWape = candidate.ValidationWape,
                     ValidationMae = candidate.ValidationMae,
                     Score = candidate.Score,
+                    StabilityPenalty = candidate.StabilityPenalty,
                     IsSelected = candidate.IsSelected
                 }).ToList()
             };
