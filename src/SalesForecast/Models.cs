@@ -32,6 +32,13 @@ public sealed class ForecastSummaryRecord
     public double TrainQuantity { get; init; }
     public double TestActualQuantity { get; init; }
     public double TestForecastQuantity { get; init; }
+    public double Phi { get; init; }
+    public double StabilityPenalty { get; init; }
+    public double RawForecastMax { get; init; }
+    public double ClampedForecastMax { get; init; }
+    public bool WasClamped { get; init; }
+    public int ClampedPointCount { get; init; }
+    public double ClampUpperBound { get; init; }
     public string Status { get; init; } = "Success";
     public string ErrorMessage { get; init; } = string.Empty;
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
@@ -64,11 +71,13 @@ public sealed class ForecastCandidateRecord
     public double Alpha { get; init; }
     public double Beta { get; init; }
     public double Gamma { get; init; }
+    public double Phi { get; init; }
     public int SeasonLength { get; init; }
     public double ValidationSmape { get; init; }
     public double ValidationWape { get; init; }
     public double ValidationMae { get; init; }
     public double Score { get; init; }
+    public double StabilityPenalty { get; init; }
     public bool IsSelected { get; init; }
 }
 
